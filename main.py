@@ -7,11 +7,15 @@ import subprocess
 
 # --- Init ---
 pygame.init()
+SCALE = 1
+MIN_SCALE = 1
+MAX_SCALE = 4
+
 TILE_SIZE = 32
 GRID_WIDTH, GRID_HEIGHT = 40, 40
 VIEW_WIDTH, VIEW_HEIGHT = 20, 20
 WIDTH, HEIGHT = VIEW_WIDTH * TILE_SIZE, VIEW_HEIGHT * TILE_SIZE
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 clock = pygame.time.Clock()
 
 # --- Colors ---
@@ -42,6 +46,8 @@ tile_images = {
     USED_LAND: pygame.image.load("Assets/used_land.png").convert()
 }
 
+player_image = pygame.image.load("Assets/player.png").convert_alpha()
+loot_image = pygame.image.load("Assets/loot.png").convert_alpha()
 
 # Load high score
 try:
@@ -64,6 +70,8 @@ turrets_placed = 0
 pirates_killed = 0
 tiles_placed = 0
 game_over = False
+fade_done = False
+
 
 king_pos = center
 player_pos = list(center)
@@ -86,6 +94,8 @@ projectiles = []
 projectile_speed = 0.2
 TURRET_RANGE = 4
 
+game_surface = pygame.Surface((WIDTH, HEIGHT))
+
 # --- Drawing ---
 def draw_grid():
     minimap_scale = 3
@@ -104,46 +114,49 @@ def draw_grid():
                 if tile in [TURRET, TREE, SAPLING]:
                     land_image = tile_images.get(LAND)
                     if land_image:
-                        screen.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
+                        game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
 
                 # Then draw the actual tile
                 image = tile_images.get(tile)
                 if image:
-                    screen.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
+                    game_surface.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
                 else:
-                    pygame.draw.rect(screen, BLACK, rect)
+                    pygame.draw.rect(game_surface, BLACK, rect)
 
     for p in pirates:
         for s in p["ship"]:
             sx = s["x"] - top_left_x
             sy = s["y"] - top_left_y
             if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
-                pygame.draw.rect(screen, TAN, (sx*TILE_SIZE, sy*TILE_SIZE, TILE_SIZE, TILE_SIZE))
+                pygame.draw.rect(game_surface, TAN, (sx*TILE_SIZE, sy*TILE_SIZE, TILE_SIZE, TILE_SIZE))
 
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
-    pygame.draw.rect(screen, WHITE, (px*TILE_SIZE+4, py*TILE_SIZE+4, TILE_SIZE-8, TILE_SIZE-8))
+    game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px*TILE_SIZE, py*TILE_SIZE))
+
 
     kx = king_pos[0] - top_left_x
     ky = king_pos[1] - top_left_y
-    pygame.draw.rect(screen, (255, 215, 0), (kx*TILE_SIZE, ky*TILE_SIZE, TILE_SIZE, TILE_SIZE))
+    land_image = tile_images.get(LAND)
+    if land_image:
+        game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), (kx*TILE_SIZE, ky*TILE_SIZE))
+    game_surface.blit(pygame.transform.scale(loot_image, (TILE_SIZE, TILE_SIZE)), (kx*TILE_SIZE, ky*TILE_SIZE))
 
     for p in pirates:
-        px = p["x"] - top_left_x
-        py = p["y"] - top_left_y
-        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            color = (160, 82, 45) if p["state"] == "boat" else RED
-            pygame.draw.rect(screen, color, (px*TILE_SIZE+4, py*TILE_SIZE+4, TILE_SIZE-8, TILE_SIZE-8))
+        for pirate in p.get("pirates", []):
+            px = pirate["x"] - top_left_x
+            py = pirate["y"] - top_left_y
+            if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+                screen_x = int(px * TILE_SIZE + 6)
+                screen_y = int(py * TILE_SIZE + 6)
+                pygame.draw.rect(game_surface, RED, (screen_x, screen_y, TILE_SIZE - 12, TILE_SIZE - 12))
+
 
     for proj in projectiles:
         px = proj["x"] - top_left_x
         py = proj["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            pygame.draw.circle(screen, ORANGE, (int(px*TILE_SIZE+TILE_SIZE//2), int(py*TILE_SIZE+TILE_SIZE//2)), 4)
-
-    font = pygame.font.SysFont(None, 24)
-    text = font.render(f"Wood: {wood} | Selected: {selected_block}", True, WHITE)
-    screen.blit(text, (5, 5))
+            pygame.draw.circle(game_surface, ORANGE, (int(px*TILE_SIZE+TILE_SIZE//2), int(py*TILE_SIZE+TILE_SIZE//2)), 4)
 
     for my in range(GRID_HEIGHT):
         for mx in range(GRID_WIDTH):
@@ -171,20 +184,71 @@ def draw_grid():
         mx = int(p["x"]) * minimap_scale
         my = int(p["y"]) * minimap_scale
         pygame.draw.rect(minimap_surface, RED, (mx, my, minimap_scale, minimap_scale))
-    screen.blit(minimap_surface, (5, HEIGHT - GRID_HEIGHT * minimap_scale - 5))
+
+def draw_ui():
+    font = pygame.font.SysFont(None, 28)
+    score = turrets_placed + pirates_killed + tiles_placed
+    wood_text = font.render(f"Wood: {wood}", True, WHITE)
+    score_text = font.render(f"Score: {score}", True, WHITE)
+    quit_text = font.render(f"Press ESC to quit", True, WHITE)
+
+    screen.blit(wood_text, (10, 10))
+    screen.blit(score_text, (10, 40))
+    screen.blit(quit_text, (10, 70))
+
+def draw_minimap():
+    minimap_scale = 3
+    minimap_surface = pygame.Surface((GRID_WIDTH * minimap_scale, GRID_HEIGHT * minimap_scale))
+    
+    for my in range(GRID_HEIGHT):
+        for mx in range(GRID_WIDTH):
+            tile = grid[my][mx]
+            color = {
+                WATER: BLUE,
+                LAND: GREEN,
+                TREE: BROWN,
+                SAPLING: (150, 255, 150),
+                WALL: DARK_GRAY,
+                TURRET: YELLOW,
+                BOAT_TILE: TAN,
+                USED_LAND: LIGHT_GRAY
+            }.get(tile, BLACK)
+            if (mx, my) == tuple(player_pos):
+                color = WHITE
+            pygame.draw.rect(minimap_surface, color, (mx*minimap_scale, my*minimap_scale, minimap_scale, minimap_scale))
+
+    # Draw camera view rectangle
+    cam_x = player_pos[0] - VIEW_WIDTH // 2
+    cam_y = player_pos[1] - VIEW_HEIGHT // 2
+    cam_rect = pygame.Rect(cam_x * minimap_scale, cam_y * minimap_scale, VIEW_WIDTH * minimap_scale, VIEW_HEIGHT * minimap_scale)
+    pygame.draw.rect(minimap_surface, WHITE, cam_rect, 1)
+
+    # Draw pirates
+    for p in pirates:
+        mx = int(p["x"]) * minimap_scale
+        my = int(p["y"]) * minimap_scale
+        pygame.draw.rect(minimap_surface, RED, (mx, my, minimap_scale, minimap_scale))
+
+    screen_width, _ = screen.get_size()
+    minimap_x = screen_width - minimap_surface.get_width() - 10
+    screen.blit(minimap_surface, (minimap_x, 10))
+
     
 def show_game_over():
     global high_score
     global turrets_placed, pirates_killed, tiles_placed
-    font = pygame.font.SysFont(None, 40)
-    small_font = pygame.font.SysFont(None, 28)
-    screen.fill(BLACK)
 
     score = turrets_placed + pirates_killed + tiles_placed
     if score > high_score:
         high_score = score
         with open("score.txt", "w") as f:
             f.write(str(high_score))
+
+    base_surface = pygame.Surface((WIDTH, HEIGHT))
+    base_surface.fill(BLACK)
+
+    font = pygame.font.SysFont(None, 48)
+    small_font = pygame.font.SysFont(None, 32)
 
     lines = [
         "Game Over!",
@@ -200,27 +264,91 @@ def show_game_over():
 
     for i, line in enumerate(lines):
         text = small_font.render(line, True, WHITE)
-        screen.blit(text, (WIDTH // 2 - text.get_width() // 2, 80 + i * 35))
+        base_surface.blit(text, (WIDTH // 2 - text.get_width() // 2, 100 + i * 40))
 
-    pygame.display.flip()
+    # Get screen and scaling info
+    screen_w, screen_h = screen.get_size()
+    aspect_ratio = WIDTH / HEIGHT
+    max_scale_w = screen_w / WIDTH
+    max_scale_h = screen_h / HEIGHT
+    scale_factor = min(max_scale_w, max_scale_h)
 
+    scaled_width = int(WIDTH * scale_factor)
+    scaled_height = int(HEIGHT * scale_factor)
+
+    offset_x = (screen_w - scaled_width) // 2
+    offset_y = (screen_h - scaled_height) // 2
+
+    # Fade-in loop
+    for alpha in range(255, -1, -10):
+        scaled_surface = pygame.transform.scale(base_surface, (scaled_width, scaled_height))
+        screen.fill(BLACK)
+        screen.blit(scaled_surface, (offset_x, offset_y))
+
+        fade = pygame.Surface((screen_w, screen_h))
+        fade.fill(BLACK)
+        fade.set_alpha(alpha)
+        screen.blit(fade, (0, 0))
+
+        pygame.display.flip()
+        pygame.time.delay(20)
 
 # --- Game Logic ---
 def spawn_pirate():
+    global pirates
+
+    score = turrets_placed + pirates_killed + tiles_placed
+    min_blocks = max(3, 1 + score // 10)
+    max_blocks = max(min_blocks, 1 + score // 5)
+    block_count = random.randint(min_blocks, max_blocks)
+
+    # Entry edge and central point
     side = random.choice(["top", "bottom", "left", "right"])
-    if side == "top": x, y = random.randint(0, GRID_WIDTH-1), 0
-    elif side == "bottom": x, y = random.randint(0, GRID_WIDTH-1), GRID_HEIGHT-1
-    elif side == "left": x, y = 0, random.randint(0, GRID_HEIGHT-1)
-    else: x, y = GRID_WIDTH-1, random.randint(0, GRID_HEIGHT-1)
+    if side == "top":
+        x, y = random.randint(5, GRID_WIDTH - 6), 0
+    elif side == "bottom":
+        x, y = random.randint(5, GRID_WIDTH - 6), GRID_HEIGHT - 1
+    elif side == "left":
+        x, y = 0, random.randint(5, GRID_HEIGHT - 6)
+    else:
+        x, y = GRID_WIDTH - 1, random.randint(5, GRID_HEIGHT - 6)
+
+    # Generate a blob around the center tile
+    ship_tiles = set()
+    frontier = [(x, y)]
+    while len(ship_tiles) < block_count and frontier:
+        cx, cy = frontier.pop(0)
+        if 0 <= cx < GRID_WIDTH and 0 <= cy < GRID_HEIGHT and (cx, cy) not in ship_tiles:
+            ship_tiles.add((cx, cy))
+            neighbors = [
+                (cx+1, cy), (cx-1, cy),
+                (cx, cy+1), (cx, cy-1)
+            ]
+            random.shuffle(neighbors)
+            frontier.extend(neighbors)
+
+    ship_tiles = list(ship_tiles)
+
+    # Determine number of pirates (1 per 3 ship blocks, min 1)
+    pirate_count = max(1, len(ship_tiles) // 3)
+
+    # Choose pirate positions from the ship tiles
+    pirate_positions = random.sample(ship_tiles, pirate_count)
+
+    # Direction towards king
     dx = king_pos[0] - x
     dy = king_pos[1] - y
     length = max(abs(dx), abs(dy)) or 1
+    direction = (dx / length, dy / length)
+
+    # Append the pirate ship to the pirates list
     pirates.append({
         "x": x,
         "y": y,
-        "dir": (dx/length, dy/length),
+        "dir": direction,
         "state": "boat",
-        "ship": [{"x": x+i, "y": y} for i in range(-1, 2)]
+        "ship": [{"x": sx, "y": sy} for sx, sy in ship_tiles],
+        "pirates": [{"x": float(px), "y": float(py)} for px, py in pirate_positions]
     })
 
 def update_pirates():
@@ -234,6 +362,9 @@ def update_pirates():
             for s in p["ship"]:
                 s["x"] += p["dir"][0]*0.05
                 s["y"] += p["dir"][1]*0.05
+            for pirate in p["pirates"]:
+                pirate["x"] += p["dir"][0]*0.05
+                pirate["y"] += p["dir"][1]*0.05
             nx = p["x"] + p["dir"][0]*0.05
             ny = p["y"] + p["dir"][1]*0.05
             tile_x, tile_y = int(nx), int(ny)
@@ -288,7 +419,7 @@ def update_pirates():
             pirate_walk_timer = now
 
             if (int(p["x"]), int(p["y"])) == king_pos:
-                print("You were captured!")
+                print("The pirates stole your loot!")
                 game_over = True
 
 def update_turrets():
@@ -300,7 +431,7 @@ def update_turrets():
                     if dist <= TURRET_RANGE:
                         dx, dy = p["x"] - x, p["y"] - y
                         length = math.hypot(dx, dy) or 1
-                        projectiles.append({"x": x + 0.5, "y": y + 0.5, "dir": (dx/length, dy/length)})
+                        projectiles.append({"x": x, "y": y, "dir": (dx/length, dy/length)})
                         break
 
 def update_projectiles():
@@ -320,14 +451,19 @@ def update_projectiles():
         proj["x"] = next_x
         proj["y"] = next_y
 
-        # Check pirate hits
-        for p in pirates[:]:  # <— loop starts here
-            if abs(proj["x"] - p["x"]) < 0.3 and abs(proj["y"] - p["y"]) < 0.3:
+        # Check individual pirate hits
+        for p in pirates[:]:
+            for pirate in p["pirates"][:]:
+                if abs(proj["x"] - pirate["x"]) < 0.3 and abs(proj["y"] - pirate["y"]) < 0.3:
+                    p["pirates"].remove(pirate)
+                    pirates_killed += 1
+                    if proj in projectiles:
+                        projectiles.remove(proj)
+                    break
+
+            # Remove pirate group if all pirates are dead and ship is also gone
+            if not p["pirates"] and not p["ship"]:
                 pirates.remove(p)
-                pirates_killed += 1
-                if proj in projectiles:
-                    projectiles.remove(proj)
-                break
 
             # Check ship tile hits
             for s in p["ship"][:]:
@@ -401,9 +537,11 @@ def try_move(dx, dy):
 # --- Game Loop ---
 running = True
 while running:
-    screen.fill(BLACK)
+    
     if game_over:
-        show_game_over()
+        if not fade_done:
+            show_game_over()
+            fade_done = True
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -416,8 +554,28 @@ while running:
                     subprocess.Popen([sys.executable, os.path.abspath(__file__)])
                     pygame.quit()
                     sys.exit()
+
         continue
+    game_surface.fill(BLACK)
     draw_grid()
+    scaled_surface = pygame.transform.scale(game_surface, (WIDTH * SCALE, HEIGHT * SCALE))
+    # Center the game on screen
+    screen_width, screen_height = screen.get_size()
+    blit_x = (screen_width - WIDTH * SCALE) // 2
+    blit_y = (screen_height - HEIGHT * SCALE) // 2
+    # Scale the game surface based on current zoom level
+    scaled_surface = pygame.transform.scale(game_surface, (WIDTH * SCALE, HEIGHT * SCALE))
+
+    # Center the game on screen
+    screen_width, screen_height = screen.get_size()
+    blit_x = (screen_width - WIDTH * SCALE) // 2
+    blit_y = (screen_height - HEIGHT * SCALE) // 2
+
+    # Draw the scaled game to the center of the screen
+    screen.fill(BLACK)
+    screen.blit(scaled_surface, (blit_x, blit_y))
+    draw_ui()
+    draw_minimap()
     pygame.display.flip()
 
     update_trees()
@@ -450,6 +608,13 @@ while running:
                 selected_block = WALL
             elif event.key == pygame.K_3:
                 selected_block = SAPLING
+            elif event.key == pygame.K_ESCAPE:
+                running = False
+        elif event.type == pygame.MOUSEWHEEL:
+            if event.y > 0 and SCALE < MAX_SCALE:
+                SCALE += 1
+            elif event.y < 0 and SCALE > MIN_SCALE:
+                SCALE -= 1
 
     keys = pygame.key.get_pressed()
     if keys[pygame.K_w]: try_move(0, -1)

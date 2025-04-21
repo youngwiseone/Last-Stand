@@ -4,6 +4,7 @@ Mini game.
 
 Start on an island, protect your loot in the center from pirates.
 WASD to move
+Mouse scroll to zoom in and out
 E to grow a tree (uses 1 wood)
 Q to place/pickup a turret (uses 3 wood, protection from pirates)
 Space to place land tile
