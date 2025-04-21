@@ -48,6 +48,7 @@ tile_images = {
 
 player_image = pygame.image.load("Assets/player.png").convert_alpha()
 loot_image = pygame.image.load("Assets/loot.png").convert_alpha()
+pirate_image = pygame.image.load("Assets/pirate.png").convert_alpha()
 
 # Load high score
 try:
@@ -125,7 +126,9 @@ def draw_grid():
             sx = s["x"] - top_left_x
             sy = s["y"] - top_left_y
             if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
-                pygame.draw.rect(game_surface, TAN, (sx*TILE_SIZE, sy*TILE_SIZE, TILE_SIZE, TILE_SIZE))
+                boat_tile_image = tile_images.get(BOAT_TILE)
+                if boat_tile_image:
+                    game_surface.blit(pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE)), (sx*TILE_SIZE, sy*TILE_SIZE))
 
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
@@ -143,9 +146,7 @@ def draw_grid():
             px = pirate["x"] - top_left_x
             py = pirate["y"] - top_left_y
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-                screen_x = int(px * TILE_SIZE + 6)
-                screen_y = int(py * TILE_SIZE + 6)
-                pygame.draw.rect(game_surface, RED, (screen_x, screen_y, TILE_SIZE - 12, TILE_SIZE - 12))
+                game_surface.blit(pygame.transform.scale(pirate_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
 
         # Display "Land Ahoy!" above the pirates during the landed state
         if p["state"] == "landed":

@@ -1,4 +1,4 @@
-# **King's Last Stand**
+# **Last Stand**
 
 Requires: **Python**, and the following libraries:  
 `pygame`, `random`, `sys`, `math`, `os`, `subprocess`
