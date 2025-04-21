@@ -7,7 +7,7 @@ import subprocess
 
 # --- Init ---
 pygame.init()
-SCALE = 1
+SCALE = 2
 MIN_SCALE = 1
 MAX_SCALE = 4
 
@@ -109,13 +109,11 @@ def draw_grid():
                 tile = grid[gy][gx]
                 rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
 
-                # Always draw base land if the tile is one of these
                 if tile in [TURRET, TREE, SAPLING]:
                     land_image = tile_images.get(LAND)
                     if land_image:
                         game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
 
-                # Then draw the actual tile
                 image = tile_images.get(tile)
                 if image:
                     game_surface.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
@@ -133,7 +131,6 @@ def draw_grid():
     py = player_pos[1] - top_left_y
     game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px*TILE_SIZE, py*TILE_SIZE))
 
-
     kx = king_pos[0] - top_left_x
     ky = king_pos[1] - top_left_y
     land_image = tile_images.get(LAND)
@@ -150,6 +147,15 @@ def draw_grid():
                 screen_y = int(py * TILE_SIZE + 6)
                 pygame.draw.rect(game_surface, RED, (screen_x, screen_y, TILE_SIZE - 12, TILE_SIZE - 12))
 
+        # Display "Land Ahoy!" above the pirates during the landed state
+        if p["state"] == "landed":
+            px = p["x"] - top_left_x
+            py = p["y"] - top_left_y
+            if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+                font = pygame.font.SysFont(None, 24)
+                text = font.render("Land Ahoy!", True, WHITE)
+                text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
+                game_surface.blit(text, text_rect)
 
     for proj in projectiles:
         px = proj["x"] - top_left_x
@@ -178,7 +184,6 @@ def draw_grid():
     cam_y = player_pos[1] - VIEW_HEIGHT // 2
     cam_rect = pygame.Rect(cam_x * minimap_scale, cam_y * minimap_scale, VIEW_WIDTH * minimap_scale, VIEW_HEIGHT * minimap_scale)
     pygame.draw.rect(minimap_surface, WHITE, cam_rect, 1)
-    # Draw pirates on the minimap
     for p in pirates:
         mx = int(p["x"]) * minimap_scale
         my = int(p["y"]) * minimap_scale
@@ -358,6 +363,7 @@ def update_pirates():
             if not p["ship"]:
                 pirates.remove(p)
                 continue
+            # Move the ship
             for s in p["ship"]:
                 s["x"] += p["dir"][0] * 0.05
                 s["y"] += p["dir"][1] * 0.05
@@ -366,24 +372,39 @@ def update_pirates():
                 pirate["y"] += p["dir"][1] * 0.05
             nx = p["x"] + p["dir"][0] * 0.05
             ny = p["y"] + p["dir"][1] * 0.05
-            tile_x, tile_y = int(nx), int(ny)
-            if 0 <= tile_x < GRID_WIDTH and 0 <= tile_y < GRID_HEIGHT and grid[tile_y][tile_x] != WATER:
+
+            # Check if any ship tile hits a non-water tile
+            landed = False
+            landing_tile = None
+            for s in p["ship"]:
+                sx, sy = int(s["x"]), int(s["y"])
+                if 0 <= sx < GRID_WIDTH and 0 <= sy < GRID_HEIGHT and grid[sy][sx] != WATER:
+                    landed = True
+                    landing_tile = (sx, sy)
+                    break
+
+            if landed:
                 for s in p["ship"]:
                     sx, sy = int(round(s["x"])), int(round(s["y"]))
                     if 0 <= sx < GRID_WIDTH and 0 <= sy < GRID_HEIGHT and grid[sy][sx] == WATER:
                         grid[sy][sx] = BOAT_TILE
                 p["ship"] = []
-                p["state"] = "walk"
-                p["x"], p["y"] = tile_x, tile_y
+                p["state"] = "landed"
+                p["land_time"] = now
+                p["x"], p["y"] = landing_tile
             else:
                 p["x"], p["y"] = nx, ny
 
-        else:
-            # Initialize walk timer for this pirate group if not set
+        elif p["state"] == "landed":
+            # Wait for 1 second (1000 ms)
+            if now - p["land_time"] >= 1000:
+                p["state"] = "walk"
+            # The "Land Ahoy!" message is drawn in draw_grid
+
+        else:  # "walk" state
             if "walk_timer" not in p:
                 p["walk_timer"] = 0
 
-            # Check if any pirate is close to the king
             for pirate in p["pirates"]:
                 dist = math.hypot(pirate["x"] - king_pos[0], pirate["y"] - king_pos[1])
                 if dist < 2.0:
@@ -393,11 +414,9 @@ def update_pirates():
                     game_over = True
                     return
 
-            # Skip if this group can't move yet
             if now - p["walk_timer"] < pirate_walk_delay:
                 continue
 
-            # Move each pirate individually toward the king
             for pirate in p["pirates"]:
                 dx = king_pos[0] - pirate["x"]
                 dy = king_pos[1] - pirate["y"]
@@ -405,12 +424,10 @@ def update_pirates():
                 alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
 
                 def can_walk(x, y):
-                    # Check if the tile is walkable and not occupied by another pirate
                     if not (0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT):
                         return False
                     if grid[y][x] in [TREE, WATER]:
                         return False
-                    # Check if another pirate is already on this tile
                     for other_p in pirates:
                         for other_pirate in other_p["pirates"]:
                             if other_pirate is not pirate:
@@ -432,14 +449,12 @@ def update_pirates():
                         moved = True
 
                 if not moved:
-                    # Chop tree if stuck
                     for dx_try, dy_try in [primary, alt]:
                         cx, cy = int(pirate["x"] + dx_try), int(pirate["y"] + dy_try)
                         if 0 <= cx < GRID_WIDTH and 0 <= cy < GRID_HEIGHT and grid[cy][cx] == TREE:
                             grid[cy][cx] = LAND
                             break
 
-            # Update the group's position to the average of its pirates
             if p["pirates"]:
                 avg_x = sum(pirate["x"] for pirate in p["pirates"]) / len(p["pirates"])
                 avg_y = sum(pirate["y"] for pirate in p["pirates"]) / len(p["pirates"])
