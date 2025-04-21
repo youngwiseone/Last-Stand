@@ -87,7 +87,6 @@ sapling_growth_time = 10000
 pirates = []
 pirate_spawn_timer = 0
 spawn_delay = 5000
-pirate_walk_timer = 0
 pirate_walk_delay = 300
 
 projectiles = []
@@ -352,7 +351,7 @@ def spawn_pirate():
     })
 
 def update_pirates():
-    global pirate_walk_timer, game_over
+    global game_over
     now = pygame.time.get_ticks()
     for p in pirates[:]:
         if p["state"] == "boat":
@@ -360,13 +359,13 @@ def update_pirates():
                 pirates.remove(p)
                 continue
             for s in p["ship"]:
-                s["x"] += p["dir"][0]*0.05
-                s["y"] += p["dir"][1]*0.05
+                s["x"] += p["dir"][0] * 0.05
+                s["y"] += p["dir"][1] * 0.05
             for pirate in p["pirates"]:
-                pirate["x"] += p["dir"][0]*0.05
-                pirate["y"] += p["dir"][1]*0.05
-            nx = p["x"] + p["dir"][0]*0.05
-            ny = p["y"] + p["dir"][1]*0.05
+                pirate["x"] += p["dir"][0] * 0.05
+                pirate["y"] += p["dir"][1] * 0.05
+            nx = p["x"] + p["dir"][0] * 0.05
+            ny = p["y"] + p["dir"][1] * 0.05
             tile_x, tile_y = int(nx), int(ny)
             if 0 <= tile_x < GRID_WIDTH and 0 <= tile_y < GRID_HEIGHT and grid[tile_y][tile_x] != WATER:
                 for s in p["ship"]:
@@ -378,49 +377,75 @@ def update_pirates():
                 p["x"], p["y"] = tile_x, tile_y
             else:
                 p["x"], p["y"] = nx, ny
+
         else:
-            if now - pirate_walk_timer < pirate_walk_delay:
+            # Initialize walk timer for this pirate group if not set
+            if "walk_timer" not in p:
+                p["walk_timer"] = 0
+
+            # Check if any pirate is close to the king
+            for pirate in p["pirates"]:
+                dist = math.hypot(pirate["x"] - king_pos[0], pirate["y"] - king_pos[1])
+                if dist < 2.0:
+                    print(f"Pirate at ({pirate['x']}, {pirate['y']}), King at {king_pos}, Distance: {dist}")
+                if dist < 1.0:
+                    print("The pirates stole your loot!")
+                    game_over = True
+                    return
+
+            # Skip if this group can't move yet
+            if now - p["walk_timer"] < pirate_walk_delay:
                 continue
 
-            dx = king_pos[0] - p["x"]
-            dy = king_pos[1] - p["y"]
+            # Move each pirate individually toward the king
+            for pirate in p["pirates"]:
+                dx = king_pos[0] - pirate["x"]
+                dy = king_pos[1] - pirate["y"]
+                primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
+                alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
 
-            # Primary and alternate directions
-            primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
-            alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
+                def can_walk(x, y):
+                    # Check if the tile is walkable and not occupied by another pirate
+                    if not (0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT):
+                        return False
+                    if grid[y][x] in [TREE, WATER]:
+                        return False
+                    # Check if another pirate is already on this tile
+                    for other_p in pirates:
+                        for other_pirate in other_p["pirates"]:
+                            if other_pirate is not pirate:
+                                if int(other_pirate["x"]) == x and int(other_pirate["y"]) == y:
+                                    return False
+                    return True
 
-            def can_walk(x, y):
-                return 0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT and grid[y][x] not in [TREE, WATER]
-
-            moved = False
-
-            # Try primary direction
-            tx, ty = int(p["x"] + primary[0]), int(p["y"] + primary[1])
-            if can_walk(tx, ty):
-                p["x"] += primary[0]
-                p["y"] += primary[1]
-                moved = True
-            else:
-                # Try alternate direction
-                ax, ay = int(p["x"] + alt[0]), int(p["y"] + alt[1])
-                if can_walk(ax, ay):
-                    p["x"] += alt[0]
-                    p["y"] += alt[1]
+                moved = False
+                tx, ty = int(pirate["x"] + primary[0]), int(pirate["y"] + primary[1])
+                if can_walk(tx, ty):
+                    pirate["x"] += primary[0]
+                    pirate["y"] += primary[1]
                     moved = True
+                else:
+                    ax, ay = int(pirate["x"] + alt[0]), int(pirate["y"] + alt[1])
+                    if can_walk(ax, ay):
+                        pirate["x"] += alt[0]
+                        pirate["y"] += alt[1]
+                        moved = True
 
-            if not moved:
-                # Chop tree in either direction if stuck
-                for dx_try, dy_try in [primary, alt]:
-                    cx, cy = int(p["x"] + dx_try), int(p["y"] + dy_try)
-                    if 0 <= cx < GRID_WIDTH and 0 <= cy < GRID_HEIGHT and grid[cy][cx] == TREE:
-                        grid[cy][cx] = LAND
-                        break  # only chop one tree per step
+                if not moved:
+                    # Chop tree if stuck
+                    for dx_try, dy_try in [primary, alt]:
+                        cx, cy = int(pirate["x"] + dx_try), int(pirate["y"] + dy_try)
+                        if 0 <= cx < GRID_WIDTH and 0 <= cy < GRID_HEIGHT and grid[cy][cx] == TREE:
+                            grid[cy][cx] = LAND
+                            break
 
-            pirate_walk_timer = now
+            # Update the group's position to the average of its pirates
+            if p["pirates"]:
+                avg_x = sum(pirate["x"] for pirate in p["pirates"]) / len(p["pirates"])
+                avg_y = sum(pirate["y"] for pirate in p["pirates"]) / len(p["pirates"])
+                p["x"], p["y"] = avg_x, avg_y
 
-            if (int(p["x"]), int(p["y"])) == king_pos:
-                print("The pirates stole your loot!")
-                game_over = True
+            p["walk_timer"] = now
 
 def update_turrets():
     for y in range(GRID_HEIGHT):
