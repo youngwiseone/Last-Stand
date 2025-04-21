@@ -1,3 +1,5 @@
+Requires python, pygame, random, sys, math, os, subprocess
+
 Mini game.
 
 Start on an island, protect your loot in the center from pirates.
