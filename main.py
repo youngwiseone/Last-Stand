@@ -30,6 +30,19 @@ LIGHT_GRAY = (200, 200, 200)
 # --- Tile Types ---
 WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND = range(8)
 
+# --- Load Tile Images ---
+tile_images = {
+    WATER: pygame.image.load("Assets/water.png").convert(),
+    LAND: pygame.image.load("Assets/land.png").convert(),
+    TREE: pygame.image.load("Assets/tree.png").convert_alpha(),
+    SAPLING: pygame.image.load("Assets/sapling.png").convert_alpha(),
+    WALL: pygame.image.load("Assets/wall.png").convert(),
+    TURRET: pygame.image.load("Assets/turret.png").convert_alpha(),
+    BOAT_TILE: pygame.image.load("Assets/boat_tile.png").convert(),
+    USED_LAND: pygame.image.load("Assets/used_land.png").convert()
+}
+
+
 # Load high score
 try:
     with open("score.txt", "r") as f:
@@ -86,20 +99,19 @@ def draw_grid():
             if 0 <= gx < GRID_WIDTH and 0 <= gy < GRID_HEIGHT:
                 tile = grid[gy][gx]
                 rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
-                color = {
-                    WATER: BLUE,
-                    LAND: GREEN,
-                    TREE: BROWN,
-                    SAPLING: (150, 255, 150),
-                    WALL: DARK_GRAY,
-                    TURRET: YELLOW,
-                    BOAT_TILE: TAN,
-                    USED_LAND: LIGHT_GRAY
-                }.get(tile, BLACK)
-                pygame.draw.rect(screen, color, rect)
-                if tile == TURRET and (gx, gy) == king_pos:
-                    pygame.draw.circle(screen, ORANGE, rect.center, TURRET_RANGE * TILE_SIZE, 1)
-                pygame.draw.rect(screen, BLACK, rect, 1)
+
+                # Always draw base land if the tile is one of these
+                if tile in [TURRET, TREE, SAPLING]:
+                    land_image = tile_images.get(LAND)
+                    if land_image:
+                        screen.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
+
+                # Then draw the actual tile
+                image = tile_images.get(tile)
+                if image:
+                    screen.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
+                else:
+                    pygame.draw.rect(screen, BLACK, rect)
 
     for p in pirates:
         for s in p["ship"]:
