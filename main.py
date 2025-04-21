@@ -263,7 +263,7 @@ def show_game_over():
         f"Pirates Killed: {pirates_killed}",
         f"Tiles Placed: {tiles_placed}",
         "",
-        "Press SPACE to restart or Q to quit"
+        "Press SPACE to restart or ESC to quit"
     ]
 
     for i, line in enumerate(lines):
@@ -587,7 +587,7 @@ while running:
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_q:
+                if event.key == pygame.K_ESCAPE:
                     pygame.quit()
                     sys.exit()
                 elif event.key == pygame.K_SPACE:
@@ -636,20 +636,15 @@ while running:
                     f.write(str(score))
             running = False
         elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_e:
-                interact()
-            elif event.key == pygame.K_SPACE:
+            if event.key == pygame.K_SPACE:
                 place_land_ahead()
-            elif event.key == pygame.K_q:
-                place_turret()
-            elif event.key == pygame.K_1:
-                selected_block = LAND
-            elif event.key == pygame.K_2:
-                selected_block = WALL
-            elif event.key == pygame.K_3:
-                selected_block = SAPLING
             elif event.key == pygame.K_ESCAPE:
                 running = False
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:  # Left click
+                interact()
+            elif event.button == 3:  # Right click
+                place_turret()
         elif event.type == pygame.MOUSEWHEEL:
             if event.y > 0 and SCALE < MAX_SCALE:
                 SCALE += 1
