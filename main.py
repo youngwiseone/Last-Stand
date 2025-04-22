@@ -20,7 +20,9 @@ screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 clock = pygame.time.Clock()
 
 explosions = []  # List to track explosion effects
+explosions.clear() # Clear sparks to ensure no old sparks remain
 sparks = []  # List to track spark particles
+sparks.clear() # Clear sparks to ensure no old sparks remain
 
 # --- Sounds ---
 sound_place_land = pygame.mixer.Sound("Assets/sound/place_land.wav")
@@ -52,7 +54,9 @@ tile_images = {
     WALL: pygame.image.load("Assets/wall.png").convert(),
     TURRET: pygame.image.load("Assets/turret.png").convert_alpha(),
     BOAT_TILE: pygame.image.load("Assets/boat_tile.png").convert(),
-    USED_LAND: pygame.image.load("Assets/used_land.png").convert()
+    USED_LAND: pygame.image.load("Assets/used_land.png").convert(),
+    "UNDER_LAND": pygame.image.load("Assets/under_land.png").convert_alpha(),
+    "UNDER_WOOD": pygame.image.load("Assets/under_wood.png").convert_alpha()
 }
 
 water_frames = [
@@ -99,6 +103,13 @@ player_move_timer = 0
 player_move_delay = 150
 facing = [0, -1]
 
+# In the game state section
+turret_cooldowns = {}  # Tracks last firing time for each turret
+turret_levels = {}  # Tracks the level of each turret (key: (x, y), value: level)
+BASE_TURRET_FIRE_RATE = 1000  # Base fire rate in milliseconds (1 second at level 1)
+TURRET_UPGRADE_COSTS = {1: 1, 2: 2, 3: 4}  # Cost to upgrade to the next level (from level 1 to 2, 2 to 3, 3 to 4)
+TURRET_MAX_LEVEL = 4  # Maximum turret level
+
 tree_growth = {}
 sapling_growth_time = 10000
 
@@ -113,13 +124,13 @@ TURRET_RANGE = 4
 
 game_surface = pygame.Surface((WIDTH, HEIGHT))
 
-# --- Drawing ---
 def draw_grid():
     minimap_scale = 3
     minimap_surface = pygame.Surface((GRID_WIDTH * minimap_scale, GRID_HEIGHT * minimap_scale))
     top_left_x = player_pos[0] - VIEW_WIDTH // 2
     top_left_y = player_pos[1] - VIEW_HEIGHT // 2
 
+    # Step 1: Draw all tiles first (background layer)
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
@@ -127,17 +138,64 @@ def draw_grid():
                 tile = grid[gy][gx]
                 rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
 
-                if tile in [TURRET, TREE, SAPLING]:
-                    land_image = tile_images.get(LAND)
-                    if land_image:
-                        game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
-
+                # Draw the base tile (e.g., water, used_land)
                 image = tile_images.get(tile)
                 if image:
                     game_surface.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
                 else:
                     pygame.draw.rect(game_surface, BLACK, rect)
 
+    # Step 2: Draw under_land.png for LAND, TURRET, USED_LAND, SAPLING, and TREE tiles with water below
+    # Also draw under_wood.png for BOAT_TILE tiles with water below
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            gx, gy = top_left_x + x, top_left_y + y
+            if 0 <= gx < GRID_WIDTH and 0 <= gy < GRID_HEIGHT:
+                tile = grid[gy][gx]
+                # Check if the current tile is one that should have under_land or under_wood
+                below_y = gy + 1
+                if 0 <= below_y < GRID_HEIGHT:  # Ensure we’re within grid bounds
+                    below_tile = grid[below_y][gx]
+                    if below_tile == WATER:  # Only place under texture if the tile below is water
+                        # Draw under_land for LAND, TURRET, USED_LAND, SAPLING, and TREE
+                        if tile in [LAND, TURRET, USED_LAND, SAPLING, TREE]:
+                            under_land_image = tile_images.get("UNDER_LAND")
+                            if under_land_image:
+                                under_rect = pygame.Rect(x*TILE_SIZE, (y+1)*TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                                game_surface.blit(pygame.transform.scale(under_land_image, (TILE_SIZE, TILE_SIZE)), under_rect)
+                        # Draw under_wood for BOAT_TILE
+                        elif tile == BOAT_TILE:
+                            under_wood_image = tile_images.get("UNDER_WOOD")
+                            if under_wood_image:
+                                under_rect = pygame.Rect(x*TILE_SIZE, (y+1)*TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                                game_surface.blit(pygame.transform.scale(under_wood_image, (TILE_SIZE, TILE_SIZE)), under_rect)
+
+    # Step 3: Draw overlay tiles (trees, saplings, turrets) and other game elements
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            gx, gy = top_left_x + x, top_left_y + y
+            if 0 <= gx < GRID_WIDTH and 0 <= gy < GRID_HEIGHT:
+                tile = grid[gy][gx]
+                rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
+
+                # Draw overlay tiles (trees, saplings, turrets) on top of land
+                if tile in [TURRET, TREE, SAPLING]:
+                    land_image = tile_images.get(LAND)
+                    if land_image:
+                        game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
+                    overlay_image = tile_images.get(tile)
+                    if overlay_image:
+                        game_surface.blit(pygame.transform.scale(overlay_image, (TILE_SIZE, TILE_SIZE)), rect)
+
+                # Draw turret level
+                if tile == TURRET:
+                    level = turret_levels.get((gx, gy), 1)
+                    font = pygame.font.SysFont(None, 20)
+                    level_text = font.render(str(level), True, WHITE)
+                    text_rect = level_text.get_rect(center=(x * TILE_SIZE + TILE_SIZE // 2, y * TILE_SIZE - 10))
+                    game_surface.blit(level_text, text_rect)
+
+    # Continue with the rest of the drawing (ships, player, etc.)
     for p in pirates:
         for s in p["ship"]:
             sx = s["x"] - top_left_x
@@ -165,7 +223,6 @@ def draw_grid():
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
                 game_surface.blit(pygame.transform.scale(pirate_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
 
-        # Display "Land Ahoy!" above the pirates during the landed state
         if p["state"] == "landed":
             px = p["x"] - top_left_x
             py = p["y"] - top_left_y
@@ -183,23 +240,22 @@ def draw_grid():
         px = explosion["x"] - top_left_x
         py = explosion["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            alpha = int((explosion["timer"] / 500) * 255)  # Fade out
+            alpha = int((explosion["timer"] / 500) * 255)
             explosion_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
             pygame.draw.circle(explosion_surface, (255, 0, 0, alpha), (TILE_SIZE // 2, TILE_SIZE // 2), TILE_SIZE // 2)
             game_surface.blit(explosion_surface, (px * TILE_SIZE, py * TILE_SIZE))
 
     if sparks:
         spark_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        top_left_x = player_pos[0] - VIEW_WIDTH // 2
-        top_left_y = player_pos[1] - VIEW_HEIGHT // 2
         for spark in sparks:
             px = spark["x"] - top_left_x
             py = spark["y"] - top_left_y
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-                alpha = int((spark["timer"] / 100) * 255)
-                alpha = max(0, min(255, alpha))  # Clamp alpha to 0-255
+                initial_timer = spark.get("initial_timer", 100)
+                alpha = int((spark["timer"] / initial_timer) * 255)
+                alpha = max(0, min(255, alpha))
                 pygame.draw.circle(spark_surface, (*spark["color"], alpha),
-                                (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 2)
+                                  (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 2)
         game_surface.blit(spark_surface, (0, 0))
 
     for proj in projectiles:
@@ -342,6 +398,14 @@ def show_game_over():
         pygame.time.delay(20)
 
 # --- Game Logic ---
+def get_turret_refund(level):
+    if level == 1:
+        return 0  # No upgrades at level 1
+    total = 0
+    for lvl in range(1, level):
+        total += TURRET_UPGRADE_COSTS.get(lvl, 0)
+    return total
+
 def spawn_pirate():
     global pirates
 
@@ -507,15 +571,26 @@ def update_pirates():
             p["walk_timer"] = now
 
 def update_turrets():
+    now = pygame.time.get_ticks()
     for y in range(GRID_HEIGHT):
         for x in range(GRID_WIDTH):
             if grid[y][x] == TURRET:
+                turret_pos = (x, y)
+                # Get turret level and calculate fire rate
+                level = turret_levels.get(turret_pos, 1)
+                fire_rate = BASE_TURRET_FIRE_RATE / (2 ** (level - 1))  # Halve cooldown for each level
+                # Check if turret can fire
+                last_fire = turret_cooldowns.get(turret_pos, 0)
+                if now - last_fire < fire_rate:
+                    continue
+
                 for p in pirates:
                     dist = math.hypot(p["x"] - x, p["y"] - y)
                     if dist <= TURRET_RANGE:
                         dx, dy = p["x"] - x, p["y"] - y
                         length = math.hypot(dx, dy) or 1
                         projectiles.append({"x": x, "y": y, "dir": (dx/length, dy/length)})
+                        turret_cooldowns[turret_pos] = now
                         break
 
 def update_sparks():
@@ -605,6 +680,17 @@ def interact():
     elif tile == BOAT_TILE:
         grid[y][x] = USED_LAND
         wood += 1
+    elif tile == TURRET:
+        # Upgrade the turret if possible
+        turret_pos = (x, y)
+        level = turret_levels.get(turret_pos, 1)
+        if level < TURRET_MAX_LEVEL:
+            next_level = level + 1
+            cost = TURRET_UPGRADE_COSTS.get(level, 0)
+            if wood >= cost:
+                wood -= cost
+                turret_levels[turret_pos] = next_level
+                print(f"Turret at {turret_pos} upgraded to level {next_level}")
     else:
         plant_sapling()
 
@@ -620,14 +706,24 @@ def place_land_ahead():
 def place_turret():
     global wood, turrets_placed
     x, y = player_pos
+    turret_pos = (x, y)
     if grid[y][x] == TURRET:
+        # Picking up the turret: refund base cost + upgrade costs
+        level = turret_levels.get(turret_pos, 1)
+        refund = 3 + get_turret_refund(level)  # Base cost (3) + upgrade costs
         grid[y][x] = LAND
-        wood += 3
+        wood += refund
         turrets_placed = max(0, turrets_placed - 1)
+        if turret_pos in turret_cooldowns:
+            del turret_cooldowns[turret_pos]
+        if turret_pos in turret_levels:
+            del turret_levels[turret_pos]
     elif grid[y][x] == LAND and wood >= 3:
+        # Placing a new turret
         grid[y][x] = TURRET
         wood -= 3
         turrets_placed += 1
+        turret_levels[turret_pos] = 1  # Start at level 1
         sound_place_turret.play()
 
 def plant_sapling():
