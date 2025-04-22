@@ -20,6 +20,7 @@ screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 clock = pygame.time.Clock()
 
 explosions = []  # List to track explosion effects
+sparks = []  # List to track spark particles
 
 # --- Sounds ---
 sound_place_land = pygame.mixer.Sound("Assets/sound/place_land.wav")
@@ -53,6 +54,15 @@ tile_images = {
     BOAT_TILE: pygame.image.load("Assets/boat_tile.png").convert(),
     USED_LAND: pygame.image.load("Assets/used_land.png").convert()
 }
+
+water_frames = [
+    pygame.image.load("Assets/water.png").convert(),
+    pygame.image.load("Assets/water1.png").convert(),
+    pygame.image.load("Assets/water2.png").convert()
+]
+water_frame = 0
+water_frame_timer = 0
+water_frame_delay = 1200  # Switch frames every 800ms
 
 player_image = pygame.image.load("Assets/player.png").convert_alpha()
 loot_image = pygame.image.load("Assets/loot.png").convert_alpha()
@@ -178,11 +188,25 @@ def draw_grid():
             pygame.draw.circle(explosion_surface, (255, 0, 0, alpha), (TILE_SIZE // 2, TILE_SIZE // 2), TILE_SIZE // 2)
             game_surface.blit(explosion_surface, (px * TILE_SIZE, py * TILE_SIZE))
 
+    if sparks:
+        spark_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        top_left_x = player_pos[0] - VIEW_WIDTH // 2
+        top_left_y = player_pos[1] - VIEW_HEIGHT // 2
+        for spark in sparks:
+            px = spark["x"] - top_left_x
+            py = spark["y"] - top_left_y
+            if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+                alpha = int((spark["timer"] / 100) * 255)
+                alpha = max(0, min(255, alpha))  # Clamp alpha to 0-255
+                pygame.draw.circle(spark_surface, (*spark["color"], alpha),
+                                (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 2)
+        game_surface.blit(spark_surface, (0, 0))
+
     for proj in projectiles:
         px = proj["x"] - top_left_x
         py = proj["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            pygame.draw.circle(game_surface, ORANGE, (int(px*TILE_SIZE+TILE_SIZE//2), int(py*TILE_SIZE+TILE_SIZE//2)), 4)
+            pygame.draw.circle(game_surface, DARK_GRAY, (int(px*TILE_SIZE+TILE_SIZE//2), int(py*TILE_SIZE+TILE_SIZE//2)), 4)
 
     for my in range(GRID_HEIGHT):
         for mx in range(GRID_WIDTH):
@@ -427,8 +451,8 @@ def update_pirates():
 
             for pirate in p["pirates"]:
                 dist = math.hypot(pirate["x"] - loot_pos[0], pirate["y"] - loot_pos[1])
-                if dist < 2.0:
-                    print(f"Pirate at ({pirate['x']}, {pirate['y']}), loot at {loot_pos}, Distance: {dist}")
+                # if dist < 2.0:
+                    # print(f"Pirate at ({pirate['x']}, {pirate['y']}), loot at {loot_pos}, Distance: {dist}")
                 if dist < 1.0:
                     print("The pirates stole your loot!")
                     game_over = True
@@ -494,15 +518,38 @@ def update_turrets():
                         projectiles.append({"x": x, "y": y, "dir": (dx/length, dy/length)})
                         break
 
+def update_sparks():
+    for spark in sparks[:]:
+        spark["timer"] -= clock.get_time()
+        if spark["timer"] <= 0:
+            sparks.remove(spark)
+            continue
+        spark["x"] += spark["vel"][0]
+        spark["y"] += spark["vel"][1]
+
 def update_projectiles():
     global pirates_killed
     for proj in projectiles[:]:
-        # Calculate next position
         next_x = proj["x"] + proj["dir"][0] * projectile_speed
         next_y = proj["y"] + proj["dir"][1] * projectile_speed
         tile_x, tile_y = int(next_x), int(next_y)
 
-        # Block if hitting a tree
+        # Spawn 1-3 sparks per frame
+        for _ in range(random.randint(1, 3)):
+            spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])  # Yellow, Orange, Red
+            if not (isinstance(spark_color, tuple) and len(spark_color) == 3 and all(0 <= c <= 255 for c in spark_color)):
+                print(f"Invalid spark color: {spark_color}")
+                spark_color = (255, 255, 0)  # Fallback to yellow
+            spark_vel = [proj["dir"][0] * -0.05 + random.uniform(-0.02, 0.02),
+                         proj["dir"][1] * -0.05 + random.uniform(-0.02, 0.02)]
+            sparks.append({
+                "x": proj["x"],
+                "y": proj["y"],
+                "vel": spark_vel,
+                "timer": 100,  # 100ms lifetime
+                "color": spark_color
+            })
+
         if 0 <= tile_x < GRID_WIDTH and 0 <= tile_y < GRID_HEIGHT:
             if grid[tile_y][tile_x] == TREE:
                 projectiles.remove(proj)
@@ -511,22 +558,33 @@ def update_projectiles():
         proj["x"] = next_x
         proj["y"] = next_y
 
-        # Check individual pirate hits
         for p in pirates[:]:
             for pirate in p["pirates"][:]:
                 if abs(proj["x"] - pirate["x"]) < 0.3 and abs(proj["y"] - pirate["y"]) < 0.3:
                     p["pirates"].remove(pirate)
                     pirates_killed += 1
-                    explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})  # 500ms explosion effect
+                    explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
+                    # Spawn extra sparks on impact
+                    for _ in range(5):
+                        spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])
+                        if not (isinstance(spark_color, tuple) and len(spark_color) == 3 and all(0 <= c <= 255 for c in spark_color)):
+                            print(f"Invalid spark color on impact: {spark_color}")
+                            spark_color = (255, 255, 0)  # Fallback to yellow
+                        spark_vel = [random.uniform(-0.05, 0.05), random.uniform(-0.05, 0.05)]
+                        sparks.append({
+                            "x": pirate["x"],
+                            "y": pirate["y"],
+                            "vel": spark_vel,
+                            "timer": 150,
+                            "color": spark_color
+                        })
                     if proj in projectiles:
                         projectiles.remove(proj)
                     break
 
-            # Remove pirate group if all pirates are dead and ship is also gone
             if not p["pirates"] and not p["ship"]:
                 pirates.remove(p)
 
-            # Check ship tile hits
             for s in p["ship"][:]:
                 if abs(proj["x"] - s["x"]) < 0.3 and abs(proj["y"] - s["y"]) < 0.3:
                     p["ship"].remove(s)
@@ -621,6 +679,13 @@ while running:
 
         continue
     game_surface.fill(BLACK)
+    update_sparks()
+    # Water animation
+    water_frame_timer += clock.get_time()
+    if water_frame_timer >= water_frame_delay:
+        water_frame = (water_frame + 1) % len(water_frames)
+        water_frame_timer = 0
+        tile_images[WATER] = water_frames[water_frame]
     draw_grid()
     scaled_surface = pygame.transform.scale(game_surface, (WIDTH * SCALE, HEIGHT * SCALE))
     # Center the game on screen
