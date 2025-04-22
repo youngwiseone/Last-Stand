@@ -7,6 +7,7 @@ import subprocess
 
 # --- Init ---
 pygame.init()
+pygame.mixer.init()
 SCALE = 2
 MIN_SCALE = 1
 MAX_SCALE = 4
@@ -17,6 +18,13 @@ VIEW_WIDTH, VIEW_HEIGHT = 20, 20
 WIDTH, HEIGHT = VIEW_WIDTH * TILE_SIZE, VIEW_HEIGHT * TILE_SIZE
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 clock = pygame.time.Clock()
+
+explosions = []  # List to track explosion effects
+
+# --- Sounds ---
+sound_place_land = pygame.mixer.Sound("Assets/sound/place_land.wav")
+sound_plant_sapling = pygame.mixer.Sound("Assets/sound/plant_sapling.wav")
+sound_place_turret = pygame.mixer.Sound("Assets/sound/place_turret.wav")
 
 # --- Colors ---
 BLUE = (50, 150, 255)
@@ -70,10 +78,9 @@ for y in range(center[1] - 1, center[1] + 2):
 turrets_placed = 0
 pirates_killed = 0
 tiles_placed = 0
+
 game_over = False
 fade_done = False
-
-
 loot_pos = center
 player_pos = list(center)
 wood = 5
@@ -157,6 +164,19 @@ def draw_grid():
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
+
+    for explosion in explosions[:]:
+        explosion["timer"] -= clock.get_time()
+        if explosion["timer"] <= 0:
+            explosions.remove(explosion)
+            continue
+        px = explosion["x"] - top_left_x
+        py = explosion["y"] - top_left_y
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            alpha = int((explosion["timer"] / 500) * 255)  # Fade out
+            explosion_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+            pygame.draw.circle(explosion_surface, (255, 0, 0, alpha), (TILE_SIZE // 2, TILE_SIZE // 2), TILE_SIZE // 2)
+            game_surface.blit(explosion_surface, (px * TILE_SIZE, py * TILE_SIZE))
 
     for proj in projectiles:
         px = proj["x"] - top_left_x
@@ -273,7 +293,6 @@ def show_game_over():
 
     # Get screen and scaling info
     screen_w, screen_h = screen.get_size()
-    aspect_ratio = WIDTH / HEIGHT
     max_scale_w = screen_w / WIDTH
     max_scale_h = screen_h / HEIGHT
     scale_factor = min(max_scale_w, max_scale_h)
@@ -498,6 +517,7 @@ def update_projectiles():
                 if abs(proj["x"] - pirate["x"]) < 0.3 and abs(proj["y"] - pirate["y"]) < 0.3:
                     p["pirates"].remove(pirate)
                     pirates_killed += 1
+                    explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})  # 500ms explosion effect
                     if proj in projectiles:
                         projectiles.remove(proj)
                     break
@@ -537,6 +557,7 @@ def place_land_ahead():
         grid[y][x] = LAND
         wood -= 1
         tiles_placed += 1
+        sound_place_land.play()
 
 def place_turret():
     global wood, turrets_placed
@@ -549,6 +570,7 @@ def place_turret():
         grid[y][x] = TURRET
         wood -= 3
         turrets_placed += 1
+        sound_place_turret.play()
 
 def plant_sapling():
     global wood
@@ -557,6 +579,7 @@ def plant_sapling():
         grid[y][x] = SAPLING
         tree_growth[(x, y)] = pygame.time.get_ticks()
         wood -= 1
+        sound_plant_sapling.play()
 
 def update_trees():
     now = pygame.time.get_ticks()
