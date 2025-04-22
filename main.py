@@ -74,7 +74,7 @@ game_over = False
 fade_done = False
 
 
-king_pos = center
+loot_pos = center
 player_pos = list(center)
 wood = 5
 selected_block = LAND
@@ -134,8 +134,8 @@ def draw_grid():
     py = player_pos[1] - top_left_y
     game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px*TILE_SIZE, py*TILE_SIZE))
 
-    kx = king_pos[0] - top_left_x
-    ky = king_pos[1] - top_left_y
+    kx = loot_pos[0] - top_left_x
+    ky = loot_pos[1] - top_left_y
     land_image = tile_images.get(LAND)
     if land_image:
         game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), (kx*TILE_SIZE, ky*TILE_SIZE))
@@ -340,9 +340,9 @@ def spawn_pirate():
     # Choose pirate positions from the ship tiles
     pirate_positions = random.sample(ship_tiles, pirate_count)
 
-    # Direction towards king
-    dx = king_pos[0] - x
-    dy = king_pos[1] - y
+    # Direction towards loot
+    dx = loot_pos[0] - x
+    dy = loot_pos[1] - y
     length = max(abs(dx), abs(dy)) or 1
     direction = (dx / length, dy / length)
 
@@ -407,9 +407,9 @@ def update_pirates():
                 p["walk_timer"] = 0
 
             for pirate in p["pirates"]:
-                dist = math.hypot(pirate["x"] - king_pos[0], pirate["y"] - king_pos[1])
+                dist = math.hypot(pirate["x"] - loot_pos[0], pirate["y"] - loot_pos[1])
                 if dist < 2.0:
-                    print(f"Pirate at ({pirate['x']}, {pirate['y']}), King at {king_pos}, Distance: {dist}")
+                    print(f"Pirate at ({pirate['x']}, {pirate['y']}), loot at {loot_pos}, Distance: {dist}")
                 if dist < 1.0:
                     print("The pirates stole your loot!")
                     game_over = True
@@ -419,8 +419,8 @@ def update_pirates():
                 continue
 
             for pirate in p["pirates"]:
-                dx = king_pos[0] - pirate["x"]
-                dy = king_pos[1] - pirate["y"]
+                dx = loot_pos[0] - pirate["x"]
+                dy = loot_pos[1] - pirate["y"]
                 primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
                 alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
 
