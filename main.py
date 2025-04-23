@@ -414,7 +414,6 @@ def spawn_pirate():
     max_blocks = max(min_blocks, 1 + score // 5)
     block_count = random.randint(min_blocks, max_blocks)
 
-    # Entry edge and central point
     side = random.choice(["top", "bottom", "left", "right"])
     if side == "top":
         x, y = random.randint(5, GRID_WIDTH - 6), 0
@@ -425,7 +424,6 @@ def spawn_pirate():
     else:
         x, y = GRID_WIDTH - 1, random.randint(5, GRID_HEIGHT - 6)
 
-    # Generate a blob around the center tile
     ship_tiles = set()
     frontier = [(x, y)]
     while len(ship_tiles) < block_count and frontier:
@@ -440,27 +438,31 @@ def spawn_pirate():
             frontier.extend(neighbors)
 
     ship_tiles = list(ship_tiles)
-
-    # Determine number of pirates (1 per 3 ship blocks, min 1)
     pirate_count = max(1, len(ship_tiles) // 3)
-
-    # Choose pirate positions from the ship tiles
     pirate_positions = random.sample(ship_tiles, pirate_count)
 
-    # Direction towards loot
     dx = loot_pos[0] - x
     dy = loot_pos[1] - y
     length = max(abs(dx), abs(dy)) or 1
     direction = (dx / length, dy / length)
 
-    # Append the pirate ship to the pirates list
+    # Initialize each pirate with tweening state
     pirates.append({
         "x": x,
         "y": y,
         "dir": direction,
         "state": "boat",
         "ship": [{"x": sx, "y": sy} for sx, sy in ship_tiles],
-        "pirates": [{"x": float(px), "y": float(py)} for px, py in pirate_positions]
+        "pirates": [
+            {
+                "x": float(px),
+                "y": float(py),
+                "target_x": float(px),  # Initialize target position
+                "target_y": float(py),
+                "move_progress": 1.0,  # Start fully at the initial position
+                "move_duration": 300  # 300ms to move one tile (same as pirate_walk_delay)
+            } for px, py in pirate_positions
+        ]
     })
 
 def update_pirates():
@@ -471,17 +473,20 @@ def update_pirates():
             if not p["ship"]:
                 pirates.remove(p)
                 continue
-            # Move the ship
             for s in p["ship"]:
                 s["x"] += p["dir"][0] * 0.05
                 s["y"] += p["dir"][1] * 0.05
             for pirate in p["pirates"]:
                 pirate["x"] += p["dir"][0] * 0.05
                 pirate["y"] += p["dir"][1] * 0.05
+                pirate["start_x"] = pirate["x"]
+                pirate["start_y"] = pirate["y"]
+                pirate["target_x"] = pirate["x"]
+                pirate["target_y"] = pirate["y"]
+                pirate["move_progress"] = 1.0
             nx = p["x"] + p["dir"][0] * 0.05
             ny = p["y"] + p["dir"][1] * 0.05
 
-            # Check if any ship tile hits a non-water tile
             landed = False
             landing_tile = None
             for s in p["ship"]:
@@ -504,64 +509,83 @@ def update_pirates():
                 p["x"], p["y"] = nx, ny
 
         elif p["state"] == "landed":
-            # Wait for 1 second (1000 ms)
             if now - p["land_time"] >= 1000:
                 p["state"] = "walk"
-            # The "Land Ahoy!" message is drawn in draw_grid
+                p["walk_timer"] = now  # Reset walk_timer to ensure a delay before moving
+                # Ensure all pirates start from a stationary position
+                for pirate in p["pirates"]:
+                    pirate["start_x"] = pirate["x"]
+                    pirate["start_y"] = pirate["y"]
+                    pirate["target_x"] = pirate["x"]
+                    pirate["target_y"] = pirate["y"]
+                    pirate["move_progress"] = 1.0
 
         else:  # "walk" state
             if "walk_timer" not in p:
                 p["walk_timer"] = 0
 
+            # Update movement progress for all pirates in the group
+            for pirate in p["pirates"]:
+                if pirate["move_progress"] < 1.0:
+                    elapsed = clock.get_time()
+                    pirate["move_progress"] = min(1.0, pirate["move_progress"] + elapsed / pirate["move_duration"])
+                    pirate["x"] = pirate["start_x"] + (pirate["target_x"] - pirate["start_x"]) * pirate["move_progress"]
+                    pirate["y"] = pirate["start_y"] + (pirate["target_y"] - pirate["start_y"]) * pirate["move_progress"]
+
+            # Only calculate a new target position if the previous movement is complete
+            if now - p["walk_timer"] < pirate_walk_delay:
+                continue
+
             for pirate in p["pirates"]:
                 dist = math.hypot(pirate["x"] - loot_pos[0], pirate["y"] - loot_pos[1])
-                # if dist < 2.0:
-                    # print(f"Pirate at ({pirate['x']}, {pirate['y']}), loot at {loot_pos}, Distance: {dist}")
                 if dist < 1.0:
                     print("The pirates stole your loot!")
                     game_over = True
                     return
 
-            if now - p["walk_timer"] < pirate_walk_delay:
-                continue
+                if pirate["move_progress"] >= 1.0:
+                    dx = loot_pos[0] - pirate["x"]
+                    dy = loot_pos[1] - pirate["y"]
+                    primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
+                    alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
 
-            for pirate in p["pirates"]:
-                dx = loot_pos[0] - pirate["x"]
-                dy = loot_pos[1] - pirate["y"]
-                primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
-                alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
+                    def can_walk(x, y):
+                        if not (0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT):
+                            return False
+                        if grid[y][x] in [TREE, WATER]:
+                            return False
+                        for other_p in pirates:
+                            for other_pirate in other_p["pirates"]:
+                                if other_pirate is not pirate:
+                                    if int(other_pirate["x"]) == x and int(other_pirate["y"]) == y:
+                                        return False
+                        return True
 
-                def can_walk(x, y):
-                    if not (0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT):
-                        return False
-                    if grid[y][x] in [TREE, WATER]:
-                        return False
-                    for other_p in pirates:
-                        for other_pirate in other_p["pirates"]:
-                            if other_pirate is not pirate:
-                                if int(other_pirate["x"]) == x and int(other_pirate["y"]) == y:
-                                    return False
-                    return True
-
-                moved = False
-                tx, ty = int(pirate["x"] + primary[0]), int(pirate["y"] + primary[1])
-                if can_walk(tx, ty):
-                    pirate["x"] += primary[0]
-                    pirate["y"] += primary[1]
-                    moved = True
-                else:
-                    ax, ay = int(pirate["x"] + alt[0]), int(pirate["y"] + alt[1])
-                    if can_walk(ax, ay):
-                        pirate["x"] += alt[0]
-                        pirate["y"] += alt[1]
+                    moved = False
+                    tx, ty = int(pirate["x"] + primary[0]), int(pirate["y"] + primary[1])
+                    if can_walk(tx, ty):
+                        pirate["start_x"] = pirate["x"]
+                        pirate["start_y"] = pirate["y"]
+                        pirate["target_x"] = tx
+                        pirate["target_y"] = ty
+                        pirate["move_progress"] = 0.0
                         moved = True
+                    else:
+                        ax, ay = int(pirate["x"] + alt[0]), int(pirate["y"] + alt[1])
+                        if can_walk(ax, ay):
+                            pirate["start_x"] = pirate["x"]
+                            pirate["start_y"] = pirate["y"]
+                            pirate["target_x"] = ax
+                            pirate["target_y"] = ay
+                            pirate["move_progress"] = 0.0
+                            moved = True
 
-                if not moved:
-                    for dx_try, dy_try in [primary, alt]:
-                        cx, cy = int(pirate["x"] + dx_try), int(pirate["y"] + dy_try)
-                        if 0 <= cx < GRID_WIDTH and 0 <= cy < GRID_HEIGHT and grid[cy][cx] == TREE:
-                            grid[cy][cx] = LAND
-                            break
+                    if not moved:
+                        for dx_try, dy_try in [primary, alt]:
+                            cx, cy = int(pirate["x"] + dx_try), int(pirate["y"] + dy_try)
+                            if 0 <= cx < GRID_WIDTH and 0 <= cy < GRID_HEIGHT and grid[cy][cx] == TREE:
+                                grid[cy][cx] = LAND
+                                break
 
             if p["pirates"]:
                 avg_x = sum(pirate["x"] for pirate in p["pirates"]) / len(p["pirates"])
@@ -585,13 +609,18 @@ def update_turrets():
                     continue
 
                 for p in pirates:
-                    dist = math.hypot(p["x"] - x, p["y"] - y)
-                    if dist <= TURRET_RANGE:
-                        dx, dy = p["x"] - x, p["y"] - y
-                        length = math.hypot(dx, dy) or 1
-                        projectiles.append({"x": x, "y": y, "dir": (dx/length, dy/length)})
-                        turret_cooldowns[turret_pos] = now
-                        break
+                    # Check each individual pirate in the group
+                    for pirate in p.get("pirates", []):
+                        dist = math.hypot(pirate["x"] - x, pirate["y"] - y)
+                        if dist <= TURRET_RANGE:
+                            dx, dy = pirate["x"] - x, pirate["y"] - y
+                            length = math.hypot(dx, dy) or 1
+                            projectiles.append({"x": x, "y": y, "dir": (dx/length, dy/length)})
+                            turret_cooldowns[turret_pos] = now
+                            break  # Only fire at one pirate per turret per frame
+                    else:
+                        continue  # If no pirate was in range, continue to the next pirate group
+                    break  # Break out of the pirate group loop after firing
 
 def update_sparks():
     for spark in sparks[:]:
@@ -690,7 +719,6 @@ def interact():
             if wood >= cost:
                 wood -= cost
                 turret_levels[turret_pos] = next_level
-                print(f"Turret at {turret_pos} upgraded to level {next_level}")
     else:
         plant_sapling()
 
