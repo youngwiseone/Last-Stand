@@ -22,6 +22,7 @@ clock = pygame.time.Clock()
 explosions = []  # List to track explosion effects
 explosions.clear() # Clear sparks to ensure no old sparks remain
 sparks = []  # List to track spark particles
+hat_particles = []  # List to track hat particles
 sparks.clear() # Clear sparks to ensure no old sparks remain
 
 # --- Sounds ---
@@ -70,7 +71,11 @@ water_frame_delay = 1200  # Switch frames every 800ms
 
 player_image = pygame.image.load("Assets/player.png").convert_alpha()
 loot_image = pygame.image.load("Assets/loot.png").convert_alpha()
-pirate_image = pygame.image.load("Assets/pirate.png").convert_alpha()
+pirate_hat_image = pygame.image.load("Assets/pirate_hat.png").convert_alpha()
+pirate_sprites = {
+    "full_health": pygame.image.load("Assets/pirate.png").convert_alpha(),
+    "low_health": pygame.image.load("Assets/pirate2.png").convert_alpha()
+}
 
 # Load high score
 try:
@@ -221,6 +226,12 @@ def draw_grid():
             px = pirate["x"] - top_left_x
             py = pirate["y"] - top_left_y
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+                # Select sprite based on health
+                health_ratio = pirate["health"] / pirate["max_health"]
+                if health_ratio > 0.5:
+                    pirate_image = pirate_sprites["full_health"]
+                else:
+                    pirate_image = pirate_sprites["low_health"]
                 game_surface.blit(pygame.transform.scale(pirate_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
 
         if p["state"] == "landed":
@@ -231,6 +242,26 @@ def draw_grid():
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
+    
+    # Render hat particles
+    for hat in hat_particles:
+        px = hat["x"] - top_left_x
+        py = hat["y"] - top_left_y
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            # Rotate the hat sprite
+            rotated_hat = pygame.transform.rotate(pirate_hat_image, hat["rotation"])
+            # Scale the rotated hat to fit the tile size
+            scaled_hat = pygame.transform.scale(rotated_hat, (TILE_SIZE, TILE_SIZE))
+            # Calculate alpha for fading
+            alpha = int((hat["timer"] / hat["initial_timer"]) * 255)
+            alpha = max(0, min(255, alpha))
+            # Apply alpha to the hat sprite
+            hat_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+            hat_surface.blit(scaled_hat, (0, 0))
+            hat_surface.set_alpha(alpha)
+            # Center the hat sprite at its position
+            hat_rect = hat_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE + TILE_SIZE // 2))
+            game_surface.blit(hat_surface, hat_rect.topleft)
 
     for explosion in explosions[:]:
         explosion["timer"] -= clock.get_time()
@@ -446,7 +477,7 @@ def spawn_pirate():
     length = max(abs(dx), abs(dy)) or 1
     direction = (dx / length, dy / length)
 
-    # Initialize each pirate with tweening state
+    # Initialize each pirate with tweening state and health
     pirates.append({
         "x": x,
         "y": y,
@@ -457,10 +488,14 @@ def spawn_pirate():
             {
                 "x": float(px),
                 "y": float(py),
-                "target_x": float(px),  # Initialize target position
+                "start_x": float(px),
+                "start_y": float(py),
+                "target_x": float(px),
                 "target_y": float(py),
-                "move_progress": 1.0,  # Start fully at the initial position
-                "move_duration": 300  # 300ms to move one tile (same as pirate_walk_delay)
+                "move_progress": 1.0,
+                "move_duration": 300,
+                "health": 2,  # Pirates take 2 hits to kill
+                "max_health": 2  # Define max health for sprite swapping
             } for px, py in pirate_positions
         ]
     })
@@ -640,17 +675,17 @@ def update_projectiles():
 
         # Spawn 1-3 sparks per frame
         for _ in range(random.randint(1, 3)):
-            spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])  # Yellow, Orange, Red
+            spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])
             if not (isinstance(spark_color, tuple) and len(spark_color) == 3 and all(0 <= c <= 255 for c in spark_color)):
                 print(f"Invalid spark color: {spark_color}")
-                spark_color = (255, 255, 0)  # Fallback to yellow
+                spark_color = (255, 255, 0)
             spark_vel = [proj["dir"][0] * -0.05 + random.uniform(-0.02, 0.02),
                          proj["dir"][1] * -0.05 + random.uniform(-0.02, 0.02)]
             sparks.append({
                 "x": proj["x"],
                 "y": proj["y"],
                 "vel": spark_vel,
-                "timer": 100,  # 100ms lifetime
+                "timer": 100,
                 "color": spark_color
             })
 
@@ -664,24 +699,36 @@ def update_projectiles():
 
         for p in pirates[:]:
             for pirate in p["pirates"][:]:
-                if abs(proj["x"] - pirate["x"]) < 0.3 and abs(proj["y"] - pirate["y"]) < 0.3:
-                    p["pirates"].remove(pirate)
-                    pirates_killed += 1
-                    explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
-                    # Spawn extra sparks on impact
-                    for _ in range(5):
-                        spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])
-                        if not (isinstance(spark_color, tuple) and len(spark_color) == 3 and all(0 <= c <= 255 for c in spark_color)):
-                            print(f"Invalid spark color on impact: {spark_color}")
-                            spark_color = (255, 255, 0)  # Fallback to yellow
-                        spark_vel = [random.uniform(-0.05, 0.05), random.uniform(-0.05, 0.05)]
-                        sparks.append({
+                if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
+                    pirate["health"] -= 1  # Reduce health by 1
+                    if pirate["health"] == 1:  # When health reaches 1, spawn the hat
+                        hat_particles.append({
                             "x": pirate["x"],
-                            "y": pirate["y"],
-                            "vel": spark_vel,
-                            "timer": 150,
-                            "color": spark_color
+                            "y": pirate["y"] - 0.5,  # Start above the pirate (top of sprite)
+                            "vel_x": random.uniform(-0.05, 0.05),  # Random horizontal velocity
+                            "vel_y": -0.1,  # Upward velocity to "pop" off
+                            "rotation": 0,  # Initial rotation
+                            "rotation_speed": random.uniform(-10, 10),  # Degrees per frame
+                            "timer": 1000,  # 1 second lifetime
+                            "initial_timer": 1000  # For fading
                         })
+                    if pirate["health"] <= 0:
+                        p["pirates"].remove(pirate)
+                        pirates_killed += 1
+                        explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
+                        for _ in range(5):
+                            spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])
+                            if not (isinstance(spark_color, tuple) and len(spark_color) == 3 and all(0 <= c <= 255 for c in spark_color)):
+                                print(f"Invalid spark color on impact: {spark_color}")
+                                spark_color = (255, 255, 0)
+                            spark_vel = [random.uniform(-0.05, 0.05), random.uniform(-0.05, 0.05)]
+                            sparks.append({
+                                "x": pirate["x"],
+                                "y": pirate["y"],
+                                "vel": spark_vel,
+                                "timer": 150,
+                                "color": spark_color
+                            })
                     if proj in projectiles:
                         projectiles.remove(proj)
                     break
@@ -695,6 +742,19 @@ def update_projectiles():
                     if proj in projectiles:
                         projectiles.remove(proj)
                     break
+
+def update_hat_particles():
+    for hat in hat_particles[:]:
+        hat["timer"] -= clock.get_time()
+        if hat["timer"] <= 0:
+            hat_particles.remove(hat)
+            continue
+        # Update position
+        hat["x"] += hat["vel_x"]
+        hat["y"] += hat["vel_y"]
+        hat["vel_y"] += 0.002  # Add gravity to make the hat fall after popping up
+        # Update rotation
+        hat["rotation"] = (hat["rotation"] + hat["rotation_speed"]) % 360
 
 def interact():
     global wood
@@ -804,6 +864,7 @@ while running:
         continue
     game_surface.fill(BLACK)
     update_sparks()
+    update_hat_particles()
     # Water animation
     water_frame_timer += clock.get_time()
     if water_frame_timer >= water_frame_delay:
