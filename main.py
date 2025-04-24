@@ -107,8 +107,21 @@ selected_block = LAND
 player_move_timer = 0
 player_move_delay = 150
 facing = [0, -1]
+interaction_ui_enabled = False  # Start with interaction UI disabled
 
-# In the game state section
+last_player_pos = list(player_pos)  # Track the last position to detect movement
+stationary_timer = 0  # Timer to track how long the player has been stationary (ms)
+STATIONARY_DELAY = 500  # 0.5 seconds delay before showing UI
+
+interaction_ui = {
+    "left_message": "",  # Text for left click (e.g., "Upgrade -3 Wood")
+    "right_message": "",  # Text for right click (e.g., "Pickup +3 Wood")
+    "alpha": 0,  # Transparency (0 to 255)
+    "offset": 20,  # Vertical offset for sliding (pixels)
+    "fade_timer": 0,  # Timer for fade-in animation (ms)
+    "fade_duration": 500  # Duration of fade-in animation (ms)
+}
+
 turret_cooldowns = {}  # Tracks last firing time for each turret
 turret_levels = {}  # Tracks the level of each turret (key: (x, y), value: level)
 BASE_TURRET_FIRE_RATE = 1000  # Base fire rate in milliseconds (1 second at level 1)
@@ -221,6 +234,12 @@ def draw_grid():
         game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), (kx*TILE_SIZE, ky*TILE_SIZE))
     game_surface.blit(pygame.transform.scale(loot_image, (TILE_SIZE, TILE_SIZE)), (kx*TILE_SIZE, ky*TILE_SIZE))
 
+    # In draw_grid, after rendering the player
+    px = player_pos[0] - top_left_x
+    py = player_pos[1] - top_left_y
+    game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px*TILE_SIZE, py*TILE_SIZE))
+    draw_interaction_ui()  # Add this line
+
     for p in pirates:
         for pirate in p.get("pirates", []):
             px = pirate["x"] - top_left_x
@@ -327,10 +346,14 @@ def draw_ui():
     wood_text = font.render(f"Wood: {wood}", True, WHITE)
     score_text = font.render(f"Score: {score}", True, WHITE)
     quit_text = font.render(f"Press ESC to quit", True, WHITE)
+    help_color = WHITE if not interaction_ui_enabled else (150, 150, 150)  # Gray when enabled
+    help_text = font.render("Press I for Help", True, help_color)
+    
 
     screen.blit(wood_text, (10, 10))
     screen.blit(score_text, (10, 40))
     screen.blit(quit_text, (10, 70))
+    screen.blit(help_text, (10, 100))
 
 def draw_minimap():
     minimap_scale = 3
@@ -743,6 +766,51 @@ def update_projectiles():
                         projectiles.remove(proj)
                     break
 
+def draw_interaction_ui():
+    if not interaction_ui["left_message"] and not interaction_ui["right_message"]:
+        return  # Don't draw if there are no interactions
+
+    # Get player's screen position
+    top_left_x = player_pos[0] - VIEW_WIDTH // 2
+    top_left_y = player_pos[1] - VIEW_HEIGHT // 2
+    px = player_pos[0] - top_left_x
+    py = player_pos[1] - top_left_y
+
+    # Calculate positions for the prompts
+    font = pygame.font.SysFont(None, 14)  # Font size
+    player_center_x = px * TILE_SIZE + TILE_SIZE // 2
+    player_top_y = py * TILE_SIZE - 10 - interaction_ui["offset"]
+
+    # Draw left click prompt
+    if interaction_ui["left_message"]:
+        lines = interaction_ui["left_message"].split("\n")
+        text_surfaces = [font.render(line.strip(), True, WHITE) for line in lines if line.strip()]
+        total_height = sum(text.get_height() for text in text_surfaces)
+        max_width = max(text.get_width() for text in text_surfaces)
+        left_surface = pygame.Surface((max_width, total_height), pygame.SRCALPHA)
+        y_offset = 0
+        for text in text_surfaces:
+            left_surface.blit(text, (0, y_offset))
+            y_offset += text.get_height()
+        left_rect = left_surface.get_rect(right=player_center_x - 10, centery=player_top_y)
+        left_surface.set_alpha(interaction_ui["alpha"])
+        game_surface.blit(left_surface, left_rect.topleft)
+
+    # Draw right click prompt
+    if interaction_ui["right_message"]:
+        lines = interaction_ui["right_message"].split("\n")
+        text_surfaces = [font.render(line.strip(), True, WHITE) for line in lines if line.strip()]
+        total_height = sum(text.get_height() for text in text_surfaces)
+        max_width = max(text.get_width() for text in text_surfaces)
+        right_surface = pygame.Surface((max_width, total_height), pygame.SRCALPHA)
+        y_offset = 0
+        for text in text_surfaces:
+            right_surface.blit(text, (0, y_offset))
+            y_offset += text.get_height()
+        right_rect = right_surface.get_rect(left=player_center_x + 10, centery=player_top_y)
+        right_surface.set_alpha(interaction_ui["alpha"])
+        game_surface.blit(right_surface, right_rect.topleft)
+
 def update_hat_particles():
     for hat in hat_particles[:]:
         hat["timer"] -= clock.get_time()
@@ -765,6 +833,7 @@ def interact():
         wood += 3
     elif tile == SAPLING:
         grid[y][x] = LAND
+        wood += 1
         del tree_growth[(x, y)]
     elif tile == BOAT_TILE:
         grid[y][x] = USED_LAND
@@ -781,6 +850,79 @@ def interact():
                 turret_levels[turret_pos] = next_level
     else:
         plant_sapling()
+
+def update_interaction_ui():
+    global interaction_ui, stationary_timer, last_player_pos
+    x, y = player_pos
+    tile = grid[y][x]
+
+    # Skip if interaction UI is disabled
+    if not interaction_ui_enabled:
+        interaction_ui["alpha"] = 0
+        interaction_ui["offset"] = 20
+        interaction_ui["fade_timer"] = 0
+        return
+
+    # Check if the player has moved
+    current_pos = list(player_pos)
+    if current_pos != last_player_pos:
+        # Player moved: reset UI and timer
+        interaction_ui["alpha"] = 0
+        interaction_ui["offset"] = 20
+        interaction_ui["fade_timer"] = 0
+        stationary_timer = 0
+        last_player_pos = current_pos
+        return  # Don't show UI while moving
+    else:
+        # Player is stationary: increment timer
+        stationary_timer += clock.get_time()
+        if stationary_timer < STATIONARY_DELAY:
+            # Not stationary long enough: keep UI hidden
+            interaction_ui["alpha"] = 0
+            interaction_ui["offset"] = 20
+            interaction_ui["fade_timer"] = 0
+            return
+
+    # Player has been stationary for 0.5 seconds: update UI
+    # Reset messages
+    interaction_ui["left_message"] = ""
+    interaction_ui["right_message"] = ""
+
+    # Check for available interactions based on tile type
+    if tile == TREE:
+        interaction_ui["left_message"] = "Chop\n+3 Wood"
+    elif tile == SAPLING:
+        interaction_ui["left_message"] = "Uproot\n +1 Wood"
+    elif tile == BOAT_TILE:
+        interaction_ui["left_message"] = "Pickup\n+1 Wood"
+    elif tile == TURRET:
+        turret_pos = (x, y)
+        level = turret_levels.get(turret_pos, 1)
+        if level < TURRET_MAX_LEVEL:
+            cost = TURRET_UPGRADE_COSTS.get(level, 0)
+            if wood >= cost:
+                interaction_ui["left_message"] = f"Upgrade\n-{cost} Wood"
+        # Right click to pick up turret
+        refund = 3 + get_turret_refund(level)
+        interaction_ui["right_message"] = f"Pickup\n+{refund} Wood"
+    elif tile == LAND:
+        if wood >= 1:
+            interaction_ui["left_message"] = "Plant Sapling\n-1 Wood"
+        if wood >= 3:
+            interaction_ui["right_message"] = "Place Turret\n-3 Wood"
+
+    # Reset animation if there are no interactions
+    if not interaction_ui["left_message"] and not interaction_ui["right_message"]:
+        interaction_ui["alpha"] = 0
+        interaction_ui["offset"] = 20
+        interaction_ui["fade_timer"] = 0
+    else:
+        # Start fade-in animation
+        if interaction_ui["fade_timer"] < interaction_ui["fade_duration"]:
+            interaction_ui["fade_timer"] += clock.get_time()
+            progress = min(1.0, interaction_ui["fade_timer"] / interaction_ui["fade_duration"])
+            interaction_ui["alpha"] = int(progress * 255)
+            interaction_ui["offset"] = 20 * (1 - progress)
 
 def place_land_ahead():
     global wood, tiles_placed
@@ -893,6 +1035,7 @@ while running:
     pygame.display.flip()
 
     update_trees()
+    update_interaction_ui()
     update_pirates()
     update_turrets()
     update_projectiles()
@@ -914,6 +1057,13 @@ while running:
                 place_land_ahead()
             elif event.key == pygame.K_ESCAPE:
                 running = False
+            elif event.key == pygame.K_i:  # Toggle interaction UI
+                interaction_ui_enabled = not interaction_ui_enabled
+                if not interaction_ui_enabled:
+                    # Reset UI state when disabling
+                    interaction_ui["alpha"] = 0
+                    interaction_ui["offset"] = 20
+                    interaction_ui["fade_timer"] = 0
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:  # Left click
                 interact()
