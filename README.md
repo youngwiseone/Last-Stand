@@ -5,10 +5,11 @@ Requires: **Python**, and the following libraries:
 
 ---
 
-A mini game where you **start on an island** and must **protect your loot in the center from pirates**.
+A mini game where you **start on an island** and must **protect yourself from pirates**.
 
 ### Controls:
 - **WASD** to move  
+- **I** for help menu
 - **Mouse Scroll** to zoom in and out  
 - **Left Click** to grow a tree *(uses 1 wood)*  
 - **Right Click** to place/pick up a turret *(uses 3 wood; protects against pirates)*  
