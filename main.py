@@ -122,12 +122,64 @@ def chunk_to_world(cx, cy, tx, ty):
     return cx * CHUNK_SIZE + tx, cy * CHUNK_SIZE + ty
 
 def generate_chunk(cx, cy):
-    """Generate a new chunk with random terrain."""
+    """Generate a new chunk with medium-sized land masses and occasional trees."""
     chunk = [[WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
+    total_tiles = CHUNK_SIZE * CHUNK_SIZE  # 256 tiles in a 16x16 chunk
+    target_land_tiles = int(total_tiles * 0.1)  # 10% land = ~26 tiles per chunk
+    min_mass_size = 5
+    max_mass_size = 15
+    land_tiles_placed = 0
+
+    # Keep generating land masses until we reach the target number of land tiles
+    while land_tiles_placed < target_land_tiles:
+        # Pick a random starting point that is water
+        available_positions = [(tx, ty) for ty in range(CHUNK_SIZE) for tx in range(CHUNK_SIZE) if chunk[ty][tx] == WATER]
+        if not available_positions:
+            break  # No more space for new land masses
+
+        start_x, start_y = random.choice(available_positions)
+        
+        # Calculate the remaining tiles needed
+        remaining_tiles = target_land_tiles - land_tiles_placed
+        
+        # Determine the size of this land mass
+        if remaining_tiles < min_mass_size:
+            mass_size = remaining_tiles  # Use the remaining tiles, even if less than min_mass_size
+        else:
+            mass_size = random.randint(min_mass_size, min(max_mass_size, remaining_tiles))
+        
+        if mass_size <= 0:
+            break  # No more tiles to place
+
+        # Use flood-fill to create a land mass
+        land_mass = set()
+        frontier = [(start_x, start_y)]
+        chunk[start_y][start_x] = LAND
+        land_mass.add((start_x, start_y))
+        land_tiles_placed += 1
+
+        while len(land_mass) < mass_size and frontier:
+            cx, cy = frontier.pop(0)
+            # Check neighboring tiles (up, down, left, right)
+            neighbors = [(cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1)]
+            random.shuffle(neighbors)  # Randomize to make shapes more natural
+            for nx, ny in neighbors:
+                if len(land_mass) >= mass_size:
+                    break
+                if (0 <= nx < CHUNK_SIZE and 0 <= ny < CHUNK_SIZE and
+                        chunk[ny][nx] == WATER and (nx, ny) not in land_mass):
+                    chunk[ny][nx] = LAND
+                    land_mass.add((nx, ny))
+                    frontier.append((nx, ny))
+                    land_tiles_placed += 1
+
+    # Add trees to some land tiles
+    tree_chance = 0.2  # 20% chance for a tree on each land tile
     for ty in range(CHUNK_SIZE):
         for tx in range(CHUNK_SIZE):
-            if random.random() < 0.3:  # 30% chance of land
-                chunk[ty][tx] = LAND
+            if chunk[ty][tx] == LAND and random.random() < tree_chance:
+                chunk[ty][tx] = TREE
+
     return chunk
 
 def delete_chunks():
