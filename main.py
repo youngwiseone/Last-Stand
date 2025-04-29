@@ -268,7 +268,6 @@ tiles_placed = 0
 
 game_over = False
 fade_done = False
-loot_pos = [0, 0]  # Now in world coordinates
 player_pos = [0, 0]  # Now in world coordinates
 wood = 5
 selected_block = LAND
@@ -367,7 +366,7 @@ def draw_grid():
                 text_rect = level_text.get_rect(center=(x * TILE_SIZE + TILE_SIZE // 2, y * TILE_SIZE - 10))
                 game_surface.blit(level_text, text_rect)
 
-    # Draw pirates, player, loot, etc.
+    # Draw pirates, player, etc.
     for p in pirates:
         for s in p["ship"]:
             sx = s["x"] - top_left_x
@@ -380,13 +379,6 @@ def draw_grid():
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
     game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
-
-    kx = loot_pos[0] - top_left_x
-    ky = loot_pos[1] - top_left_y
-    land_image = tile_images.get(LAND)
-    if land_image:
-        game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), (kx * TILE_SIZE, ky * TILE_SIZE))
-    game_surface.blit(pygame.transform.scale(loot_image, (TILE_SIZE, TILE_SIZE)), (kx * TILE_SIZE, ky * TILE_SIZE))
 
     draw_interaction_ui()
 
@@ -529,6 +521,7 @@ def show_game_over():
 
     lines = [
         "Game Over!",
+        "A pirate caught you!",
         f"Score: {score}",
         f"High Score: {high_score}",
         "",
@@ -628,9 +621,9 @@ def spawn_pirate():
     pirate_count = min(max(1, len(ship_tiles) // 3), len(ship_tiles))
     pirate_positions = random.sample(ship_tiles, pirate_count)
 
-    # Rest of the function remains the same
-    dx = loot_pos[0] - x
-    dy = loot_pos[1] - y
+    # Calculate direction toward the player instead of loot
+    dx = player_pos[0] - x
+    dy = player_pos[1] - y
     length = max(abs(dx), abs(dy)) or 1
     direction = (dx / length, dy / length)
 
@@ -725,14 +718,16 @@ def update_pirates():
                 continue
 
             for pirate in p["pirates"]:
-                dist = math.hypot(pirate["x"] - loot_pos[0], pirate["y"] - loot_pos[1])
-                if dist < 1.0:
+                # Check if the pirate touches the player
+                dist = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
+                if dist < 0.5:  # Reduced distance threshold for "touching"
                     game_over = True
                     return
 
                 if pirate["move_progress"] >= 1.0:
-                    dx = loot_pos[0] - pirate["x"]
-                    dy = loot_pos[1] - pirate["y"]
+                    # Move toward the player instead of the loot
+                    dx = player_pos[0] - pirate["x"]
+                    dy = player_pos[1] - pirate["y"]
                     primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
                     alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
 
