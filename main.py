@@ -269,6 +269,8 @@ def manage_chunks():
             del chunks[key]  # Remove from memory
 
 # --- Game State ---
+selected_tile = None  # Will store the (x, y) of the tile under the mouse
+
 turrets_placed = 0
 pirates_killed = 0
 tiles_placed = 0
@@ -361,7 +363,7 @@ def draw_grid():
             gx, gy = top_left_x + x, top_left_y + y
             tile = get_tile(gx, gy)
             rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-            if tile in [TURRET, TREE, SAPLING]:
+            if tile in [TURRET, TREE, SAPLING, LOOT]:
                 land_image = tile_images.get(LAND)
                 if land_image:
                     game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
@@ -408,6 +410,16 @@ def draw_grid():
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
+    
+    # Draw selected tile overlay
+    if selected_tile:
+        sel_x, sel_y = selected_tile
+        sel_px = sel_x - top_left_x
+        sel_py = sel_y - top_left_y
+        if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
+            overlay_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+            overlay_surface.fill((0, 0, 0, 128))  # Black with 50% transparency (128/255)
+            game_surface.blit(overlay_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
     # Draw floating wood gain texts
     for text in wood_texts:
@@ -590,6 +602,29 @@ def get_turret_refund(level):
     for lvl in range(1, level):
         total += TURRET_UPGRADE_COSTS.get(lvl, 0)
     return total
+
+def screen_to_world(mouse_x, mouse_y):
+    """Convert screen coordinates to world coordinates."""
+    screen_width, screen_height = screen.get_size()
+    blit_x = (screen_width - WIDTH * SCALE) // 2
+    blit_y = (screen_height - HEIGHT * SCALE) // 2
+
+    # Adjust for the offset and scale
+    world_x = (mouse_x - blit_x) / SCALE
+    world_y = (mouse_y - blit_y) / SCALE
+
+    # Convert to tile coordinates relative to the view
+    top_left_x = player_pos[0] - VIEW_WIDTH // 2
+    top_left_y = player_pos[1] - VIEW_HEIGHT // 2
+
+    tile_x = int(world_x // TILE_SIZE)
+    tile_y = int(world_y // TILE_SIZE)
+
+    # Convert to world coordinates
+    world_tile_x = tile_x + top_left_x
+    world_tile_y = tile_y + top_left_y
+
+    return world_tile_x, world_tile_y
 
 def spawn_pirate():
     global pirates
@@ -904,14 +939,19 @@ def draw_interaction_ui():
     if not interaction_ui["left_message"] and not interaction_ui["right_message"]:
         return
 
+    if not selected_tile:
+        return
+
+    # Convert selected tile to screen coordinates
     top_left_x = player_pos[0] - VIEW_WIDTH // 2
     top_left_y = player_pos[1] - VIEW_HEIGHT // 2
-    px = player_pos[0] - top_left_x
-    py = player_pos[1] - top_left_y
+    sel_x, sel_y = selected_tile
+    px = sel_x - top_left_x
+    py = sel_y - top_left_y
 
     font = pygame.font.SysFont(None, 14)
-    player_center_x = px * TILE_SIZE + TILE_SIZE // 2
-    player_top_y = py * TILE_SIZE - 10 - interaction_ui["offset"]
+    tile_center_x = px * TILE_SIZE + TILE_SIZE // 2
+    tile_top_y = py * TILE_SIZE - 10 - interaction_ui["offset"]
 
     if interaction_ui["left_message"]:
         lines = interaction_ui["left_message"].split("\n")
@@ -923,7 +963,7 @@ def draw_interaction_ui():
         for text in text_surfaces:
             left_surface.blit(text, (0, y_offset))
             y_offset += text.get_height()
-        left_rect = left_surface.get_rect(right=player_center_x - 10, centery=player_top_y)
+        left_rect = left_surface.get_rect(right=tile_center_x - 10, centery=tile_top_y)
         left_surface.set_alpha(interaction_ui["alpha"])
         game_surface.blit(left_surface, left_rect.topleft)
 
@@ -937,7 +977,7 @@ def draw_interaction_ui():
         for text in text_surfaces:
             right_surface.blit(text, (0, y_offset))
             y_offset += text.get_height()
-        right_rect = right_surface.get_rect(left=player_center_x + 10, centery=player_top_y)
+        right_rect = right_surface.get_rect(left=tile_center_x + 10, centery=tile_top_y)
         right_surface.set_alpha(interaction_ui["alpha"])
         game_surface.blit(right_surface, right_rect.topleft)
 
@@ -964,11 +1004,41 @@ def update_wood_texts():
         text["alpha"] = int((text["timer"] / 1000) * 255)  # Fade over 1 second
         text["alpha"] = max(0, min(255, text["alpha"]))
 
-def interact():
-    global wood
-    x, y = player_pos
+def interact(button):
+    global wood, tiles_placed, turrets_placed
+    if not selected_tile:
+        return  # No tile selected
+    x, y = selected_tile
     tile = get_tile(x, y)
-    if tile == LOOT:
+    
+    # Right-click: Handle turret placement or removal
+    if button == 3:  # Right-click
+        turret_pos = (x, y)
+        if tile == TURRET:
+            level = turret_levels.get(turret_pos, 1)
+            refund = 3 + get_turret_refund(level)
+            set_tile(x, y, LAND)
+            wood += refund
+            turrets_placed = max(0, turrets_placed - 1)
+            if turret_pos in turret_cooldowns:
+                del turret_cooldowns[turret_pos]
+            if turret_pos in turret_levels:
+                del turret_levels[turret_pos]
+        elif tile == LAND and wood >= 3:
+            set_tile(x, y, TURRET)
+            wood -= 3
+            turrets_placed += 1
+            turret_levels[turret_pos] = 1
+            sound_place_turret.play()
+        return
+
+    # Left-click: Handle other interactions
+    if tile == WATER and wood >= 1:
+        set_tile(x, y, BOAT_TILE)
+        wood -= 1
+        tiles_placed += 1
+        sound_place_land.play()
+    elif tile == LOOT:
         wood_gained = random.randint(15, 30)
         wood += wood_gained
         set_tile(x, y, LAND)
@@ -1023,15 +1093,13 @@ def interact():
 
 def update_interaction_ui():
     global interaction_ui, stationary_timer, last_player_pos
-    x, y = player_pos
-    tile = get_tile(x, y)
-
     if not interaction_ui_enabled:
         interaction_ui["alpha"] = 0
         interaction_ui["offset"] = 20
         interaction_ui["fade_timer"] = 0
         return
 
+    # Check if the player has moved (optional, can remove if not needed)
     current_pos = list(player_pos)
     if current_pos != last_player_pos:
         interaction_ui["alpha"] = 0
@@ -1048,13 +1116,29 @@ def update_interaction_ui():
             interaction_ui["fade_timer"] = 0
             return
 
+    # Use the selected tile instead of player position
+    if not selected_tile:
+        interaction_ui["left_message"] = ""
+        interaction_ui["right_message"] = ""
+        interaction_ui["alpha"] = 0
+        interaction_ui["offset"] = 20
+        interaction_ui["fade_timer"] = 0
+        return
+
+    x, y = selected_tile
+    tile = get_tile(x, y)
+
     interaction_ui["left_message"] = ""
     interaction_ui["right_message"] = ""
 
-    if tile == TREE:
-        interaction_ui["left_message"] = "Chop\n+3 Wood"
+    if tile == WATER and wood >= 1:
+        interaction_ui["left_message"] = "Place Boat Tile\n-1 Wood"
+    elif tile == LOOT:
+        interaction_ui["left_message"] = "Collect\n+15-30 Wood"
+    elif tile == TREE:
+        interaction_ui["left_message"] = "Chop\n+2-4 Wood"
     elif tile == SAPLING:
-        interaction_ui["left_message"] = "Uproot\n +1 Wood"
+        interaction_ui["left_message"] = "Uproot\n+1 Wood"
     elif tile == BOAT_TILE:
         interaction_ui["left_message"] = "Pickup\n+1 Wood"
     elif tile == TURRET:
@@ -1083,39 +1167,11 @@ def update_interaction_ui():
             interaction_ui["alpha"] = int(progress * 255)
             interaction_ui["offset"] = 20 * (1 - progress)
 
-def place_land_ahead():
-    global wood, tiles_placed
-    x, y = player_pos[0] + facing[0], player_pos[1] + facing[1]
-    if get_tile(x, y) == WATER and wood >= 1:
-        set_tile(x, y, LAND)
-        wood -= 1
-        tiles_placed += 1
-        sound_place_land.play()
-
-def place_turret():
-    global wood, turrets_placed
-    x, y = player_pos
-    turret_pos = (x, y)
-    if get_tile(x, y) == TURRET:
-        level = turret_levels.get(turret_pos, 1)
-        refund = 3 + get_turret_refund(level)
-        set_tile(x, y, LAND)
-        wood += refund
-        turrets_placed = max(0, turrets_placed - 1)
-        if turret_pos in turret_cooldowns:
-            del turret_cooldowns[turret_pos]
-        if turret_pos in turret_levels:
-            del turret_levels[turret_pos]
-    elif get_tile(x, y) == LAND and wood >= 3:
-        set_tile(x, y, TURRET)
-        wood -= 3
-        turrets_placed += 1
-        turret_levels[turret_pos] = 1
-        sound_place_turret.play()
-
 def plant_sapling():
     global wood
-    x, y = player_pos
+    if not selected_tile:
+        return
+    x, y = selected_tile
     if get_tile(x, y) == LAND and wood >= 1:
         set_tile(x, y, SAPLING)
         tree_growth[(x, y)] = pygame.time.get_ticks()
@@ -1174,6 +1230,15 @@ while running:
         water_frame = (water_frame + 1) % len(water_frames)
         water_frame_timer = 0
         tile_images[WATER] = water_frames[water_frame]
+    # Update selected tile based on mouse position
+    mouse_x, mouse_y = pygame.mouse.get_pos()
+    world_tile_x, world_tile_y = screen_to_world(mouse_x, mouse_y)
+    # Ensure the tile is within the viewable area
+    if (0 <= (world_tile_x - (player_pos[0] - VIEW_WIDTH // 2)) < VIEW_WIDTH and
+        0 <= (world_tile_y - (player_pos[1] - VIEW_HEIGHT // 2)) < VIEW_HEIGHT):
+        selected_tile = (world_tile_x, world_tile_y)
+    else:
+        selected_tile = None
     draw_grid()
     scaled_surface = pygame.transform.scale(game_surface, (WIDTH * SCALE, HEIGHT * SCALE))
     screen_width, screen_height = screen.get_size()
@@ -1204,9 +1269,7 @@ while running:
                     f.write(str(score))
             running = False
         elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE:
-                place_land_ahead()
-            elif event.key == pygame.K_ESCAPE:
+            if event.key == pygame.K_ESCAPE:
                 running = False
             elif event.key == pygame.K_i:
                 interaction_ui_enabled = not interaction_ui_enabled
@@ -1215,10 +1278,8 @@ while running:
                     interaction_ui["offset"] = 20
                     interaction_ui["fade_timer"] = 0
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1:
-                interact()
-            elif event.button == 3:
-                place_turret()
+            if event.button in [1, 3]:  # Left or right click
+                interact(event.button)
         elif event.type == pygame.MOUSEWHEEL:
             if event.y > 0 and SCALE < MAX_SCALE:
                 SCALE += 1
