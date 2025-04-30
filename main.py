@@ -66,7 +66,7 @@ TAN = (210, 180, 140)
 LIGHT_GRAY = (200, 200, 200)
 
 # --- Tile Types ---
-WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND = range(8)
+WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT = range(9)
 
 # --- Load Tile Images ---
 tile_images = {
@@ -79,7 +79,8 @@ tile_images = {
     BOAT_TILE: pygame.image.load("Assets/boat_tile.png").convert(),
     USED_LAND: pygame.image.load("Assets/used_land.png").convert(),
     "UNDER_LAND": pygame.image.load("Assets/under_land.png").convert_alpha(),
-    "UNDER_WOOD": pygame.image.load("Assets/under_wood.png").convert_alpha()
+    "UNDER_WOOD": pygame.image.load("Assets/under_wood.png").convert_alpha(),
+    LOOT: pygame.image.load("Assets/loot.png").convert_alpha()
 }
 
 water_frames = [
@@ -92,7 +93,6 @@ water_frame_timer = 0
 water_frame_delay = 1200
 
 player_image = pygame.image.load("Assets/player.png").convert_alpha()
-loot_image = pygame.image.load("Assets/loot.png").convert_alpha()
 pirate_hat_image = pygame.image.load("Assets/pirate_hat.png").convert_alpha()
 pirate_sprites = {
     "full_health": pygame.image.load("Assets/pirate.png").convert_alpha(),
@@ -179,6 +179,13 @@ def generate_chunk(cx, cy):
         for tx in range(CHUNK_SIZE):
             if chunk[ty][tx] == LAND and random.random() < tree_chance:
                 chunk[ty][tx] = TREE
+
+    # Add loot to some land tiles (rarer than trees)
+    loot_chance = 0.05  # 5% chance for loot on each land tile
+    for ty in range(CHUNK_SIZE):
+        for tx in range(CHUNK_SIZE):
+            if chunk[ty][tx] == LAND and random.random() < loot_chance:
+                chunk[ty][tx] = LOOT
 
     return chunk
 
@@ -288,6 +295,8 @@ interaction_ui = {
     "fade_timer": 0,
     "fade_duration": 500
 }
+
+wood_texts = []  # List to store floating wood gain texts
 
 turret_cooldowns = {}
 turret_levels = {}
@@ -400,6 +409,17 @@ def draw_grid():
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
 
+    # Draw floating wood gain texts
+    for text in wood_texts:
+        px = text["x"] - top_left_x
+        py = text["y"] - top_left_y
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            font = pygame.font.SysFont(None, 14)
+            text_surface = font.render(text["text"], True, WHITE)
+            text_surface.set_alpha(text["alpha"])
+            text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
+            game_surface.blit(text_surface, text_rect)
+
     for hat in hat_particles:
         px = hat["x"] - top_left_x
         py = hat["y"] - top_left_y
@@ -482,7 +502,8 @@ def draw_minimap():
                             WALL: DARK_GRAY,
                             TURRET: YELLOW,
                             BOAT_TILE: TAN,
-                            USED_LAND: LIGHT_GRAY
+                            USED_LAND: LIGHT_GRAY,
+                            LOOT: ORANGE
                         }.get(tile, BLACK)
                         world_x, world_y = chunk_to_world(cx + dx, cy + dy, mx, my)
                         if (world_x, world_y) == tuple(player_pos):
@@ -931,13 +952,46 @@ def update_hat_particles():
         hat["vel_y"] += 0.002
         hat["rotation"] = (hat["rotation"] + hat["rotation_speed"]) % 360
 
+def update_wood_texts():
+    for text in wood_texts[:]:
+        text["timer"] -= clock.get_time()
+        if text["timer"] <= 0:
+            wood_texts.remove(text)
+            continue
+        # Move text upward
+        text["y"] -= 0.02  # Adjust speed as needed
+        # Fade out
+        text["alpha"] = int((text["timer"] / 1000) * 255)  # Fade over 1 second
+        text["alpha"] = max(0, min(255, text["alpha"]))
+
 def interact():
     global wood
     x, y = player_pos
     tile = get_tile(x, y)
-    if tile == TREE:
+    if tile == LOOT:
+        wood_gained = random.randint(15, 30)
+        wood += wood_gained
         set_tile(x, y, LAND)
-        wood += 3
+        # Add floating text
+        wood_texts.append({
+            "x": x,
+            "y": y,
+            "text": f"+{wood_gained} Wood",
+            "timer": 1000,  # 1 second duration
+            "alpha": 255
+        })
+    elif tile == TREE:
+        set_tile(x, y, LAND)
+        wood_gained = 3
+        wood += wood_gained
+        # Add floating text
+        wood_texts.append({
+            "x": x,
+            "y": y,
+            "text": f"+{wood_gained} Wood",
+            "timer": 1000,  # 1 second duration
+            "alpha": 255
+        })
     elif tile == SAPLING:
         set_tile(x, y, LAND)
         wood += 1
@@ -945,7 +999,16 @@ def interact():
             del tree_growth[(x, y)]
     elif tile == BOAT_TILE:
         set_tile(x, y, USED_LAND)
-        wood += 1
+        wood_gained = 1
+        wood += wood_gained
+        # Add floating text
+        wood_texts.append({
+            "x": x,
+            "y": y,
+            "text": f"+{wood_gained} Wood",
+            "timer": 1000,  # 1 second duration
+            "alpha": 255
+        })
     elif tile == TURRET:
         turret_pos = (x, y)
         level = turret_levels.get(turret_pos, 1)
@@ -1104,6 +1167,7 @@ while running:
 
     game_surface.fill(BLACK)
     update_sparks()
+    update_wood_texts()
     update_hat_particles()
     water_frame_timer += clock.get_time()
     if water_frame_timer >= water_frame_delay:
