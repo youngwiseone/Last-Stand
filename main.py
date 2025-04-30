@@ -346,7 +346,7 @@ def draw_grid():
             below_y = gy + 1
             below_tile = get_tile(gx, below_y)
             if below_tile == WATER:
-                if tile in [LAND, TURRET, USED_LAND, SAPLING, TREE]:
+                if tile in [LAND, TURRET, USED_LAND, SAPLING, TREE, LOOT]:
                     under_land_image = tile_images.get("UNDER_LAND")
                     if under_land_image:
                         under_rect = pygame.Rect(x * TILE_SIZE, (y + 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -1068,7 +1068,10 @@ def interact(button):
         if (x, y) in tree_growth:
             del tree_growth[(x, y)]
     elif tile == BOAT_TILE:
-        set_tile(x, y, USED_LAND)
+        # Check if the player is standing on this tile
+        if player_pos[0] == x and player_pos[1] == y:
+            return  # Prevent collection if player is on the tile
+        set_tile(x, y, WATER)  # Replace with WATER instead of USED_LAND
         wood_gained = 1
         wood += wood_gained
         # Add floating text
@@ -1140,7 +1143,11 @@ def update_interaction_ui():
     elif tile == SAPLING:
         interaction_ui["left_message"] = "Uproot\n+1 Wood"
     elif tile == BOAT_TILE:
-        interaction_ui["left_message"] = "Pickup\n+1 Wood"
+        # Check if the player is on the tile to show the message
+        if player_pos[0] == x and player_pos[1] == y:
+            interaction_ui["left_message"] = "Cannot remove\nwhile standing on tile"
+        else:
+            interaction_ui["left_message"] = "Remove Boat Tile\n+1 Wood"
     elif tile == TURRET:
         turret_pos = (x, y)
         level = turret_levels.get(turret_pos, 1)
@@ -1191,7 +1198,7 @@ def try_move(dx, dy):
     x, y = player_pos[0] + dx, player_pos[1] + dy
     facing = [dx, dy]
     if now - player_move_timer > player_move_delay:
-        if get_tile(x, y) != WATER:
+        if get_tile(x, y) not in [WATER, TREE]:
             player_pos[0], player_pos[1] = x, y
             update_player_chunk()
             manage_chunks()
