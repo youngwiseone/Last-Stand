@@ -43,6 +43,7 @@ WIDTH, HEIGHT = VIEW_WIDTH * TILE_SIZE, VIEW_HEIGHT * TILE_SIZE
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 clock = pygame.time.Clock()
 
+xp_texts = []
 explosions = []
 sparks = []
 hat_particles = []
@@ -303,11 +304,8 @@ wood_texts = []  # List to store floating wood gain texts
 turret_cooldowns = {}
 turret_levels = {}
 BASE_TURRET_FIRE_RATE = 1000
-TURRET_UPGRADE_COSTS = {1: 1, 2: 2, 3: 4}
-TURRET_MAX_LEVEL = 4 # Cap for manual upgrades
-MAX_LEVEL = 10        # Overall maximum level with XP
-XP_PER_PIRATE = 1     # XP gained per pirate defeated
-XP_PER_LEVEL = 10     # XP needed to level up, scaled by current level
+TURRET_MAX_LEVEL = 99
+XP_PER_PIRATE = 1
 
 # Add turret_xp dictionary to track experience
 turret_xp = {}
@@ -436,6 +434,17 @@ def draw_grid():
             text_surface = font.render(text["text"], True, WHITE)
             text_surface.set_alpha(text["alpha"])
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
+            game_surface.blit(text_surface, text_rect)
+
+    # Draw floating XP gain texts
+    for text in xp_texts:
+        px = text["x"] - top_left_x
+        py = text["y"] - top_left_y
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            font = pygame.font.SysFont(None, 14)
+            text_surface = font.render(text["text"], True, YELLOW)  # Yellow to distinguish from wood
+            text_surface.set_alpha(text["alpha"])
+            text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))  # Slightly higher to avoid overlap
             game_surface.blit(text_surface, text_rect)
 
     for hat in hat_particles:
@@ -603,12 +612,6 @@ def save_chunk(cx, cy, chunk_data):
         pickle.dump(chunk_data, f)
 
 # --- Game Logic ---
-def get_turret_refund(level):
-    total = 0
-    for lvl in range(1, level):
-        total += TURRET_UPGRADE_COSTS.get(lvl, 0)
-    return total
-
 def screen_to_world(mouse_x, mouse_y):
     """Convert screen coordinates to world coordinates."""
     screen_width, screen_height = screen.get_size()
@@ -839,18 +842,16 @@ def update_turrets():
     now = pygame.time.get_ticks()
     top_left_x = player_pos[0] - VIEW_WIDTH // 2
     top_left_y = player_pos[1] - VIEW_HEIGHT // 2
-    for y in range(VIEW_HEIGHT + 2):  # Extra buffer for range
+    for y in range(VIEW_HEIGHT + 2):
         for x in range(VIEW_WIDTH + 2):
             gx, gy = top_left_x + x, top_left_y + y
             if get_tile(gx, gy) == TURRET:
                 turret_pos = (gx, gy)
                 level = turret_levels.get(turret_pos, 1)
-                # Adjusted fire rate formula for 10 levels
-                time_between_shots = BASE_TURRET_FIRE_RATE * (2 ** (-(level - 1) / 3))
+                time_between_shots = BASE_TURRET_FIRE_RATE * (2 ** (-0.040816 * (level - 1)))
                 last_fire = turret_cooldowns.get(turret_pos, 0)
                 if now - last_fire < time_between_shots:
                     continue
-
                 for p in pirates:
                     for pirate in p.get("pirates", []):
                         dist = math.hypot(pirate["x"] - gx, pirate["y"] - gy)
@@ -861,7 +862,7 @@ def update_turrets():
                                 "x": gx,
                                 "y": gy,
                                 "dir": (dx/length, dy/length),
-                                "turret_id": turret_pos  # Add turret ID
+                                "turret_id": turret_pos
                             })
                             turret_cooldowns[turret_pos] = now
                             break
@@ -879,13 +880,24 @@ def update_sparks():
         spark["y"] += spark["vel"][1]
 
 def update_projectiles():
-    global pirates_killed
+    global pirates_killed, wood
+    import math  # Add for pow()
     for proj in projectiles[:]:
         next_x = proj["x"] + proj["dir"][0] * projectile_speed
         next_y = proj["y"] + proj["dir"][1] * projectile_speed
         tile_x, tile_y = int(next_x), int(next_y)
 
-        # ... (existing spark generation code remains unchanged)
+        for _ in range(random.randint(1, 3)):
+            spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])
+            spark_vel = [proj["dir"][0] * -0.05 + random.uniform(-0.02, 0.02),
+                         proj["dir"][1] * -0.05 + random.uniform(-0.02, 0.02)]
+            sparks.append({
+                "x": proj["x"],
+                "y": proj["y"],
+                "vel": spark_vel,
+                "timer": 100,
+                "color": spark_color
+            })
 
         if get_tile(tile_x, tile_y) == TREE:
             projectiles.remove(proj)
@@ -894,6 +906,7 @@ def update_projectiles():
         proj["x"] = next_x
         proj["y"] = next_y
 
+        hit = False
         for p in pirates[:]:
             for pirate in p["pirates"][:]:
                 if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
@@ -923,27 +936,48 @@ def update_projectiles():
                                 "timer": 150,
                                 "color": spark_color
                             })
-                        # Award XP to the turret
                         turret_id = proj.get("turret_id")
                         if turret_id and turret_id in turret_levels:
                             turret_xp[turret_id] = turret_xp.get(turret_id, 0) + XP_PER_PIRATE
+                            xp_texts.append({
+                                "x": turret_id[0],
+                                "y": turret_id[1],
+                                "text": f"+{XP_PER_PIRATE} XP",
+                                "timer": 1000,
+                                "alpha": 255
+                            })
                             level = turret_levels[turret_id]
-                            if level < MAX_LEVEL and turret_xp[turret_id] >= XP_PER_LEVEL * level:
+                            xp_needed = math.pow(2, level - 1)  # XP to go from level to level+1
+                            if level < TURRET_MAX_LEVEL and turret_xp[turret_id] >= xp_needed:
                                 turret_levels[turret_id] += 1
-                                turret_xp[turret_id] -= XP_PER_LEVEL * level
-                    if proj in projectiles:
-                        projectiles.remove(proj)
+                                turret_xp[turret_id] -= xp_needed
+                    hit = True
                     break
-
-            if not p["pirates"] and not p["ship"]:
-                pirates.remove(p)
+                if hit:
+                    break
 
             for s in p["ship"][:]:
                 if abs(proj["x"] - s["x"]) < 0.3 and abs(proj["y"] - s["y"]) < 0.3:
                     p["ship"].remove(s)
-                    if proj in projectiles:
-                        projectiles.remove(proj)
+                    wood_gained = random.randint(5, 10)
+                    wood += wood_gained
+                    wood_texts.append({
+                        "x": s["x"],
+                        "y": s["y"],
+                        "text": f"+{wood_gained} Wood",
+                        "timer": 1000,
+                        "alpha": 255
+                    })
+                    hit = True
                     break
+                if hit:
+                    break
+
+        if hit and proj in projectiles:
+            projectiles.remove(proj)
+
+        if not p["pirates"] and not p["ship"]:
+            pirates.remove(p)
 
 def draw_interaction_ui():
     if not interaction_ui["left_message"] and not interaction_ui["right_message"]:
@@ -1014,19 +1048,28 @@ def update_wood_texts():
         text["alpha"] = int((text["timer"] / 1000) * 255)  # Fade over 1 second
         text["alpha"] = max(0, min(255, text["alpha"]))
 
+def update_xp_texts():
+    for text in xp_texts[:]:
+        text["timer"] -= clock.get_time()
+        if text["timer"] <= 0:
+            xp_texts.remove(text)
+            continue
+        text["y"] -= 0.02  # Move upward
+        text["alpha"] = int((text["timer"] / 1000) * 255)
+        text["alpha"] = max(0, min(255, text["alpha"]))
+
 def interact(button):
     global wood, tiles_placed, turrets_placed
     if not selected_tile:
-        return  # No tile selected
+        return
     x, y = selected_tile
     tile = get_tile(x, y)
     
-    # Right-click: Handle turret placement or removal
     if button == 3:  # Right-click
         turret_pos = (x, y)
         if tile == TURRET:
             level = turret_levels.get(turret_pos, 1)
-            refund = 3 + get_turret_refund(level)
+            refund = 3  # Flat refund since no upgrades
             set_tile(x, y, LAND)
             wood += refund
             turrets_placed = max(0, turrets_placed - 1)
@@ -1045,7 +1088,6 @@ def interact(button):
             sound_place_turret.play()
         return
 
-    # Left-click: Handle other interactions
     if tile == WATER and wood >= 1:
         set_tile(x, y, BOAT_TILE)
         wood -= 3
@@ -1055,24 +1097,22 @@ def interact(button):
         wood_gained = random.randint(5, 10)
         wood += wood_gained
         set_tile(x, y, LAND)
-        # Add floating text
         wood_texts.append({
             "x": x,
             "y": y,
             "text": f"+{wood_gained} Wood",
-            "timer": 1000,  # 1 second duration
+            "timer": 1000,
             "alpha": 255
         })
     elif tile == TREE:
         set_tile(x, y, LAND)
         wood_gained = 3
         wood += wood_gained
-        # Add floating text
         wood_texts.append({
             "x": x,
             "y": y,
             "text": f"+{wood_gained} Wood",
-            "timer": 1000,  # 1 second duration
+            "timer": 1000,
             "alpha": 255
         })
     elif tile == SAPLING:
@@ -1081,29 +1121,18 @@ def interact(button):
         if (x, y) in tree_growth:
             del tree_growth[(x, y)]
     elif tile == BOAT_TILE:
-        # Check if the player is standing on this tile
         if player_pos[0] == x and player_pos[1] == y:
-            return  # Prevent collection if player is on the tile
-        set_tile(x, y, WATER)  # Replace with WATER instead of USED_LAND
+            return
+        set_tile(x, y, WATER)
         wood_gained = 1
         wood += wood_gained
-        # Add floating text
         wood_texts.append({
             "x": x,
             "y": y,
             "text": f"+{wood_gained} Wood",
-            "timer": 1000,  # 1 second duration
+            "timer": 1000,
             "alpha": 255
         })
-    elif tile == TURRET:
-        turret_pos = (x, y)
-        level = turret_levels.get(turret_pos, 1)
-        if level < TURRET_MAX_LEVEL:  # Manual upgrades capped
-            next_level = level + 1
-            cost = TURRET_UPGRADE_COSTS.get(level, 0)
-            if wood >= cost:
-                wood -= cost
-                turret_levels[turret_pos] = next_level    
     else:
         plant_sapling()
 
@@ -1150,7 +1179,7 @@ def update_interaction_ui():
     if tile == WATER and wood >= 1:
         interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood"
     elif tile == LOOT:
-        interaction_ui["left_message"] = "Collect\n+15-30 Wood"
+        interaction_ui["left_message"] = "Collect\n+5-10 Wood"
     elif tile == TREE:
         interaction_ui["left_message"] = "Chop\n+2-4 Wood"
     elif tile == SAPLING:
@@ -1164,12 +1193,7 @@ def update_interaction_ui():
     elif tile == TURRET:
         turret_pos = (x, y)
         level = turret_levels.get(turret_pos, 1)
-        if level < TURRET_MAX_LEVEL:
-            cost = TURRET_UPGRADE_COSTS.get(level, 0)
-            if wood >= cost:
-                interaction_ui["left_message"] = f"Upgrade\n-{cost} Wood"
-        refund = 3 + get_turret_refund(level)
-        interaction_ui["right_message"] = f"Pickup\n+{refund} Wood"
+        interaction_ui["right_message"] = "Pickup\n+3 Wood"
     elif tile == LAND:
         if wood >= 1:
             interaction_ui["left_message"] = "Plant Sapling\n-1 Wood"
@@ -1244,6 +1268,7 @@ while running:
     game_surface.fill(BLACK)
     update_sparks()
     update_wood_texts()
+    update_xp_texts()
     update_hat_particles()
     water_frame_timer += clock.get_time()
     if water_frame_timer >= water_frame_delay:
