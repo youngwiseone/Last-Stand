@@ -31,21 +31,21 @@ def clear_chunk_files():
         except OSError as e:
             print(f"Warning: Could not delete file {file_path}: {e}")
 
-def adjust_sprite_for_rare(sprite):
-    """Overlay a bright red color at 50% opacity on the sprite, preserving alpha."""
+def adjust_sprite_for_rare(sprite, rare_type):
+    """Overlay a color specific to rare_type at 50% opacity, preserving alpha."""
     new_sprite = sprite.copy()
     pixel_array = pygame.PixelArray(new_sprite)
-    red_color = pygame.Color(255, 0, 0)  # Bright red
+    overlay_color = RARE_TYPE_COLORS[rare_type]  # Get color for rare type
     overlay_alpha = 0.5  # 50% opacity
     for x in range(new_sprite.get_width()):
         for y in range(new_sprite.get_height()):
             color = new_sprite.unmap_rgb(pixel_array[x, y])
             if color.a == 0:  # Skip transparent pixels
                 continue
-            # Blend original color with red at 50% opacity
-            new_r = int(color.r * (1 - overlay_alpha) + red_color.r * overlay_alpha)
-            new_g = int(color.g * (1 - overlay_alpha) + red_color.g * overlay_alpha)
-            new_b = int(color.b * (1 - overlay_alpha) + red_color.b * overlay_alpha)
+            # Blend original color with overlay color at 50% opacity
+            new_r = int(color.r * (1 - overlay_alpha) + overlay_color.r * overlay_alpha)
+            new_g = int(color.g * (1 - overlay_alpha) + overlay_color.g * overlay_alpha)
+            new_b = int(color.b * (1 - overlay_alpha) + overlay_color.b * overlay_alpha)
             # Preserve original alpha
             new_color = pygame.Color(new_r, new_g, new_b, color.a)
             pixel_array[x, y] = new_color
@@ -90,6 +90,13 @@ TAN = (210, 180, 140)
 LIGHT_GRAY = (200, 200, 200)
 
 RARE_PIRATE_TYPES = ["bridge_builder", "turret_breaker", "tanky", "speedy", "explosive"]
+RARE_TYPE_COLORS = {
+    "bridge_builder": pygame.Color(0, 255, 0),  # Green
+    "turret_breaker": pygame.Color(255, 255, 0),  # Yellow
+    "tanky": pygame.Color(128, 0, 128),  # Purple
+    "speedy": pygame.Color(0, 0, 255),  # Blue
+    "explosive": pygame.Color(255, 0, 0)  # Red
+}
 
 # --- Tile Types ---
 WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT = range(9)
@@ -121,12 +128,20 @@ water_frame_delay = 1200
 player_image = pygame.image.load("Assets/player.png").convert_alpha()
 # Load base pirate (hatless) and level-specific pirates and hats
 pirate_sprites = {
-    "base": pygame.image.load("Assets/pirate/pirate.png").convert_alpha(),
-    "base_rare": adjust_sprite_for_rare(pygame.image.load("Assets/pirate/pirate.png").convert_alpha())
+    "base": pygame.image.load("Assets/pirate/pirate.png").convert_alpha()
 }
+# Load normal sprites for levels 1-10
 for level in range(1, 11):
     pirate_sprites[f"level_{level}"] = pygame.image.load(f"Assets/pirate/pirate{level}.png").convert_alpha()
-    pirate_sprites[f"level_{level}_rare"] = adjust_sprite_for_rare(pygame.image.load(f"Assets/pirate/pirate{level}.png").convert_alpha())
+# Load rare sprites for base and each level/rare type combination
+for rare_type in RARE_PIRATE_TYPES:
+    pirate_sprites[f"base_{rare_type}"] = adjust_sprite_for_rare(
+        pygame.image.load("Assets/pirate/pirate.png").convert_alpha(), rare_type
+    )
+    for level in range(1, 11):
+        pirate_sprites[f"level_{level}_{rare_type}"] = adjust_sprite_for_rare(
+            pygame.image.load(f"Assets/pirate/pirate{level}.png").convert_alpha(), rare_type
+        )
 
 pirate_hat_images = {
     level: pygame.image.load(f"Assets/pirate/pirate_hat{level}.png").convert_alpha() for level in range(1, 11)
@@ -428,11 +443,18 @@ def draw_grid():
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
                 level = pirate["level"]
                 is_rare = pirate.get("is_rare", False)
-                sprite_key = f"level_{level}_rare" if is_rare and pirate["health"] > 1 else \
-                             f"level_{level}" if pirate["health"] > 1 else \
-                             "base_rare" if is_rare else "base"
+                rare_type = pirate.get("rare_type", None)
+                if is_rare and rare_type:
+                    sprite_key = f"level_{level}_{rare_type}" if pirate["health"] > 1 else f"base_{rare_type}"
+                else:
+                    sprite_key = f"level_{level}" if pirate["health"] > 1 else "base"
                 pirate_image = pirate_sprites[sprite_key]
                 game_surface.blit(pygame.transform.scale(pirate_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
+                if is_rare and rare_type == "explosive" and "fuse_count" in pirate:
+                    font = pygame.font.SysFont(None, 24)
+                    count_text = font.render(str(pirate["fuse_count"]), True, RED)
+                    text_rect = count_text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
+                    game_surface.blit(count_text, text_rect)
         if p["state"] == "landed":
             px = p["x"] - top_left_x
             py = p["y"] - top_left_y
@@ -510,7 +532,7 @@ def draw_grid():
         px = proj["x"] - top_left_x
         py = proj["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            pygame.draw.circle(game_surface, DARK_GRAY, (int(px * TILE_SIZE + TILE_SIZE // 2), int(px * TILE_SIZE + TILE_SIZE // 2)), 4)
+            pygame.draw.circle(game_surface, DARK_GRAY, (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 4)
 
 def draw_ui():
     font = pygame.font.SysFont(None, 28)
@@ -704,7 +726,7 @@ def spawn_pirate():
     pirates_data = []
     for i, (px, py) in enumerate(pirate_positions):
         level = pirate_levels[i]
-        is_rare = random.random() < 1/15  # 1 in 15 chance
+        is_rare = random.random() < 1/3  # 1 in 3 chance
         rare_type = random.choice(RARE_PIRATE_TYPES) if is_rare else None
         max_health = 2 ** level
         if is_rare and rare_type == "tanky":
@@ -743,7 +765,7 @@ def spawn_pirate():
     })
 
 def update_pirates():
-    global game_over, pirates
+    global game_over, pirates, pirates_killed
     now = pygame.time.get_ticks()
     for p in pirates[:]:
         if p["state"] == "boat":
@@ -803,24 +825,26 @@ def update_pirates():
                     pirate["y"] = pirate["start_y"] + (pirate["target_y"] - pirate["start_y"]) * pirate["move_progress"]
             if now - p["walk_timer"] < pirate_walk_delay:
                 continue
+            pirates_to_remove = []
             for pirate in p["pirates"]:
                 is_rare = pirate.get("is_rare", False)
                 rare_type = pirate.get("rare_type", None)
-                # Explosive: Check if near player and explode
+                # Explosive: Update fuse countdown
                 if is_rare and rare_type == "explosive":
-                    dist = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
-                    if dist < 1.0:
-                        # Explode: Set 3x3 grid to WATER
-                        px, py = int(pirate["x"]), int(pirate["y"])
-                        for dy in range(-1, 2):
-                            for dx in range(-1, 2):
-                                tx, ty = px + dx, py + dy
-                                if get_tile(tx, ty) != WATER:
-                                    set_tile(tx, ty, WATER)
-                        explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
-                        p["pirates"].remove(pirate)
-                        pirates_killed += 1
-                        continue
+                    dx = abs(pirate["x"] - player_pos[0])
+                    dy = abs(pirate["y"] - player_pos[1])
+                    manhattan_dist = dx + dy
+                    if manhattan_dist <= 3.0 and "fuse_timer" not in pirate:
+                        pirate["fuse_timer"] = 0
+                        pirate["fuse_count"] = 3
+                        pirate["last_count_update"] = now
+                        print(f"Fuse started for Explosive pirate at ({pirate['x']}, {pirate['y']})")
+                    if "fuse_timer" in pirate:
+                        pirate["fuse_timer"] += clock.get_time()
+                        if now - pirate["last_count_update"] >= 1000 and pirate["fuse_count"] > 0:
+                            pirate["fuse_count"] -= 1
+                            pirate["last_count_update"] = now
+                            print(f"Fuse count: {pirate['fuse_count']} at ({pirate['x']}, {pirate['y']})")
                 # Check if pirate touches the player (normal or non-turret_breaker)
                 if not (is_rare and rare_type == "turret_breaker"):
                     dist = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
@@ -845,10 +869,9 @@ def update_pirates():
                         if nearest_turret:
                             target_x, target_y = nearest_turret
                         else:
-                            target_x, target_y = player_pos[0], player_pos[1]  # Fallback to player
+                            target_x, target_y = player_pos[0], player_pos[1]
                     else:
                         target_x, target_y = player_pos[0], player_pos[1]
-                    # Calculate movement direction
                     dx = target_x - pirate["x"]
                     dy = target_y - pirate["y"]
                     primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
@@ -864,11 +887,9 @@ def update_pirates():
                         return True
                     moved = False
                     tx, ty = int(pirate["x"] + primary[0]), int(pirate["y"] + primary[1])
-                    # Bridge Builder: Place BOAT_TILE if WATER and adjacent
                     if is_rare and rare_type == "bridge_builder" and get_tile(tx, ty) == WATER:
                         if has_adjacent_boat_or_land(tx, ty):
                             set_tile(tx, ty, BOAT_TILE)
-                    # Turret Breaker: Destroy turret if reached
                     if is_rare and rare_type == "turret_breaker" and get_tile(tx, ty) == TURRET:
                         set_tile(tx, ty, LAND)
                         if (tx, ty) in turret_cooldowns:
@@ -912,6 +933,27 @@ def update_pirates():
                             if get_tile(cx, cy) == TREE:
                                 set_tile(cx, cy, LAND)
                                 break
+            # Second pass: Handle Explosive pirate explosions
+            pirates_to_remove = []
+            for pirate in p["pirates"]:
+                is_rare = pirate.get("is_rare", False)
+                rare_type = pirate.get("rare_type", None)
+                if is_rare and rare_type == "explosive" and "fuse_timer" in pirate:
+                    if now - pirate["last_count_update"] >= 3000:  # 3 seconds total
+                        print(f"Explosive pirate exploding at ({pirate['x']}, {pirate['y']})")
+                        px, py = int(pirate["x"]), int(pirate["y"])
+                        for dy in range(-1, 2):
+                            for dx in range(-1, 2):
+                                tx, ty = px + dx, py + dy
+                                if get_tile(tx, ty) != WATER:
+                                    set_tile(tx, ty, WATER)
+                        explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
+                        pirates_to_remove.append(pirate)
+                        pirates_killed += 1
+            # Remove pirates after iteration
+            for pirate in pirates_to_remove:
+                if pirate in p["pirates"]:
+                    p["pirates"].remove(pirate)
             if p["pirates"]:
                 avg_x = sum(pirate["x"] for pirate in p["pirates"]) / len(p["pirates"])
                 avg_y = sum(pirate["y"] for pirate in p["pirates"]) / len(p["pirates"])
@@ -961,7 +1003,6 @@ def update_sparks():
 
 def update_projectiles():
     global pirates_killed, wood
-    import math
     for proj in projectiles[:]:
         next_x = proj["x"] + proj["dir"][0] * projectile_speed
         next_y = proj["y"] + proj["dir"][1] * projectile_speed
@@ -1001,9 +1042,13 @@ def update_projectiles():
                             "rotation_speed": random.uniform(-10, 10),
                             "timer": 1000,
                             "initial_timer": 1000,
-                            "level": pirate["level"]  # Store pirate level for hat sprite
+                            "level": pirate["level"]
                         })
                     if pirate["health"] <= 0:
+                        # Cancel fuse for Explosive pirate
+                        if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
+                            for key in ["fuse_timer", "fuse_count", "last_count_update"]:
+                                pirate.pop(key, None)
                         p["pirates"].remove(pirate)
                         pirates_killed += 1
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
