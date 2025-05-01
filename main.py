@@ -115,7 +115,8 @@ tile_images = {
     "UNDER_WOOD": pygame.image.load("Assets/under_wood.png").convert_alpha(),
     LOOT: pygame.image.load("Assets/loot.png").convert_alpha(),
     BOAT_TILE_STAGE_2: pygame.image.load("Assets/boat_tile2.png").convert(),
-    BOAT_TILE_STAGE_3: pygame.image.load("Assets/boat_tile3.png").convert()
+    BOAT_TILE_STAGE_3: pygame.image.load("Assets/boat_tile3.png").convert(),
+    "WALL_TOP": pygame.image.load("Assets/wall_top.png").convert()
 }
 
 water_frames = [
@@ -375,7 +376,9 @@ pirate_spawn_timer = 0
 spawn_delay = 5000
 pirate_walk_delay = 300
 
-
+npcs = []  # List to store NPCs
+waller_npc_spawned = False  # Flag to ensure NPC spawns only once
+wall_placement_mode = False  # Tracks if player is in wall placement mode
 
 game_surface = pygame.Surface((WIDTH, HEIGHT))
 
@@ -415,11 +418,15 @@ def draw_grid():
             gx, gy = top_left_x + x, top_left_y + y
             tile = get_tile(gx, gy)
             rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-            if tile in [TURRET, TREE, SAPLING, LOOT]:
+            if tile in [TURRET, TREE, SAPLING, LOOT, WALL]:
                 land_image = tile_images.get(LAND)
                 if land_image:
                     game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
-                overlay_image = tile_images.get(tile)
+                if tile == WALL:
+                    below_tile = get_tile(gx, gy + 1)
+                    overlay_image = tile_images["WALL_TOP"] if below_tile == WALL else tile_images[WALL]
+                else:
+                    overlay_image = tile_images.get(tile)
                 if overlay_image:
                     game_surface.blit(pygame.transform.scale(overlay_image, (TILE_SIZE, TILE_SIZE)), rect)
             if tile == TURRET:
@@ -468,6 +475,18 @@ def draw_grid():
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
+    for npc in npcs:
+        for s in npc["ship"]:
+            sx = s["x"] - top_left_x
+            sy = s["y"] - top_left_y
+            if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
+                if npc["state"] == "boat":
+                    boat_tile_image = tile_images.get(BOAT_TILE)
+                    if boat_tile_image:
+                        game_surface.blit(pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
+                elif npc["state"] == "docked":
+                    npc_image = npc["sprite"]
+                    game_surface.blit(pygame.transform.scale(npc_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
     if selected_tile:
         sel_x, sel_y = selected_tile
         sel_px = sel_x - top_left_x
@@ -476,6 +495,16 @@ def draw_grid():
             overlay_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
             overlay_surface.fill((0, 0, 0, 128))
             game_surface.blit(overlay_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
+    if wall_placement_mode and selected_tile:
+        sel_x, sel_y = selected_tile
+        sel_px = sel_x - top_left_x
+        sel_py = sel_y - top_left_y
+        if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
+            below_tile = get_tile(sel_x, sel_y + 1)
+            wall_image = tile_images["WALL_TOP"] if below_tile == WALL else tile_images[WALL]
+            wall_surface = pygame.transform.scale(wall_image, (TILE_SIZE, TILE_SIZE))
+            wall_surface.set_alpha(128)  # 50% transparency
+            game_surface.blit(wall_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
     for text in wood_texts:
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
@@ -596,6 +625,11 @@ def draw_minimap():
         mx = (p["x"] - (cx - VIEW_CHUNKS // 2) * CHUNK_SIZE) * minimap_scale
         my = (p["y"] - (cy - VIEW_CHUNKS // 2) * CHUNK_SIZE) * minimap_scale
         pygame.draw.rect(minimap_surface, RED, (int(mx), int(my), minimap_scale, minimap_scale))
+
+    for npc in npcs:
+        mx = (npc["x"] - (cx - VIEW_CHUNKS // 2) * CHUNK_SIZE) * minimap_scale
+        my = (npc["y"] - (cy - VIEW_CHUNKS // 2) * CHUNK_SIZE) * minimap_scale
+        pygame.draw.rect(minimap_surface, (255, 200, 200), (int(mx), int(my), minimap_scale, minimap_scale))  # Purple for NPC
 
     screen_width, _ = screen.get_size()
     minimap_x = screen_width - minimap_surface.get_width() - 10
@@ -815,6 +849,58 @@ def spawn_pirate():
         "pirates": pirates_data
     })
 
+def spawn_waller_npc():
+    global npcs
+    # Find a water tile near the player to spawn the NPC ship
+    cx, cy = player_chunk
+    loaded_chunks = [(cx + dx, cy + dy) for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
+                     for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1) if (dx, dy) != (0, 0)]
+    water_tiles = []
+    for chunk_key in loaded_chunks:
+        if chunk_key in chunks:
+            chunk = chunks[chunk_key]
+            for ty in range(CHUNK_SIZE):
+                for tx in range(CHUNK_SIZE):
+                    if chunk[ty][tx] == WATER:
+                        world_x, world_y = chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
+                        water_tiles.append((world_x, world_y))
+    if not water_tiles:
+        print("No water tiles available for NPC spawning!")
+        return
+    x, y = random.choice(water_tiles)
+
+    # Create a small ship (3 tiles)
+    ship_tiles = set()
+    frontier = [(x, y)]
+    block_count = 3
+    while len(ship_tiles) < block_count and frontier:
+        cx, cy = frontier.pop(0)
+        if (cx, cy) not in ship_tiles and get_tile(cx, cy) == WATER:
+            ship_tiles.add((cx, cy))
+            neighbors = [(cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1)]
+            random.shuffle(neighbors)
+            frontier.extend(neighbors)
+    ship_tiles = list(ship_tiles)
+    if not ship_tiles:
+        print("No connected water tiles for NPC ship!")
+        return
+
+    # NPC arrives on a boat, similar to pirates
+    dx = player_pos[0] - x
+    dy = player_pos[1] - y
+    length = max(abs(dx), abs(dy)) or 1
+    direction = (dx / length, dy / length)
+
+    npcs.append({
+        "x": x,
+        "y": y,
+        "dir": direction,
+        "state": "boat",
+        "ship": [{"x": sx, "y": sy} for sx, sy in ship_tiles],
+        "type": "waller",
+        "sprite": pygame.image.load("Assets/npc_waller.png").convert_alpha()
+    })
+
 def update_pirates():
     global game_over, pirates, pirates_killed
     now = pygame.time.get_ticks()
@@ -929,7 +1015,7 @@ def update_pirates():
                     alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
                     def can_walk(x, y):
                         tile = get_tile(x, y)
-                        if tile in [TREE, WATER]:
+                        if tile in [TREE, WATER, WALL]:
                             return False
                         for other_p in pirates:
                             for other_pirate in other_p["pirates"]:
@@ -1011,6 +1097,66 @@ def update_pirates():
                 p["x"], p["y"] = avg_x, avg_y
             p["walk_timer"] = now
 
+def update_npcs():
+    global npcs
+    now = pygame.time.get_ticks()
+    for npc in npcs[:]:
+        if npc["state"] == "boat":
+            if not npc["ship"]:
+                npcs.remove(npc)
+                continue
+            for s in npc["ship"]:
+                s["x"] += npc["dir"][0] * 0.05
+                s["y"] += npc["dir"][1] * 0.05
+            nx = npc["x"] + npc["dir"][0] * 0.05
+            ny = npc["y"] + npc["dir"][1] * 0.05
+            landed = False
+            landing_tile = None
+            for s in npc["ship"]:
+                sx, sy = int(s["x"]), int(s["y"])
+                if get_tile(sx, sy) != WATER:
+                    landed = True
+                    landing_tile = (sx, sy)
+                    break
+            if landed:
+                for s in npc["ship"]:
+                    sx, sy = int(round(s["x"])), int(round(s["y"]))
+                    if get_tile(sx, sy) == WATER:
+                        set_tile(sx, sy, BOAT_TILE)
+                npc["ship"] = [{"x": landing_tile[0], "y": landing_tile[1]}]
+                npc["state"] = "docked"
+                npc["x"], npc["y"] = landing_tile
+                npc["roam_timer"] = now
+                npc["move_progress"] = 1.0
+                npc["start_x"] = float(landing_tile[0])
+                npc["start_y"] = float(landing_tile[1])
+                npc["target_x"] = float(landing_tile[0])
+                npc["target_y"] = float(landing_tile[1])
+            else:
+                npc["x"], npc["y"] = nx, ny
+        elif npc["state"] == "docked":
+            # Roaming logic
+            if npc["move_progress"] < 1.0:
+                elapsed = clock.get_time()
+                npc["move_progress"] = min(1.0, npc["move_progress"] + elapsed / 300)  # 300ms move duration
+                npc["x"] = npc["start_x"] + (npc["target_x"] - npc["start_x"]) * npc["move_progress"]
+                npc["y"] = npc["start_y"] + (npc["target_y"] - npc["start_y"]) * npc["move_progress"]
+                npc["ship"][0]["x"] = npc["x"]
+                npc["ship"][0]["y"] = npc["y"]
+            if now - npc["roam_timer"] >= 1000 and npc["move_progress"] >= 1.0:  # Move every 1 second
+                neighbors = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+                random.shuffle(neighbors)
+                for dx, dy in neighbors:
+                    tx, ty = int(npc["x"] + dx), int(npc["y"] + dy)
+                    if get_tile(tx, ty) in [LAND, USED_LAND, SAPLING, TURRET, LOOT]:  # Valid tiles to roam
+                        npc["start_x"] = npc["x"]
+                        npc["start_y"] = npc["y"]
+                        npc["target_x"] = tx
+                        npc["target_y"] = ty
+                        npc["move_progress"] = 0.0
+                        npc["roam_timer"] = now
+                        break
+
 def update_turrets():
     now = pygame.time.get_ticks()
     top_left_x = player_pos[0] - VIEW_WIDTH // 2
@@ -1072,6 +1218,9 @@ def update_projectiles():
             })
 
         if get_tile(tile_x, tile_y) == TREE:
+            projectiles.remove(proj)
+            continue
+        if get_tile(tile_x, tile_y) == WALL:
             projectiles.remove(proj)
             continue
 
@@ -1227,17 +1376,74 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed
+    global wood, tiles_placed, turrets_placed, wall_placement_mode
     if not selected_tile:
         return
     x, y = selected_tile
     tile = get_tile(x, y)
     
-    if button == 3:  # Right-click
+    if button == 1:  # Left-click
+        # Check if clicking the NPC
+        for npc in npcs:
+            if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
+                wall_placement_mode = True
+                interaction_ui["left_message"] = "Click a land tile to place a wall\n-100 Wood\nRight click to cancel"
+                interaction_ui["alpha"] = 255  # Show UI immediately
+                return
+        # Handle wall placement
+        if wall_placement_mode:
+            if tile == LAND and wood >= 100:
+                set_tile(x, y, WALL)
+                wood -= 100
+                tiles_placed += 1
+                # Optionally keep mode active: wall_placement_mode = False
+            return
+        # Existing interactions
+        if tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
+            set_tile(x, y, BOAT_TILE)
+            wood -= 3
+            tiles_placed += 1
+            sound_place_land.play()
+        elif tile == LOOT:
+            wood_gained = random.randint(5, 10)
+            wood += wood_gained
+            set_tile(x, y, LAND)
+            wood_texts.append({
+                "x": x,
+                "y": y,
+                "text": f"+{wood_gained} Wood",
+                "timer": 1000,
+                "alpha": 255
+            })
+        elif tile == TREE:
+            set_tile(x, y, LAND)
+            wood_gained = random.randint(2, 4)
+            wood += wood_gained
+            wood_texts.append({
+                "x": x,
+                "y": y,
+                "text": f"+{wood_gained} Wood",
+                "timer": 1000,
+                "alpha": 255
+            })
+        elif tile == SAPLING:
+            set_tile(x, y, LAND)
+            wood += 1
+            if (x, y) in tree_growth:
+                del tree_growth[(x, y)]
+        else:
+            plant_sapling()
+    
+    elif button == 3:  # Right-click
+        if wall_placement_mode:
+            wall_placement_mode = False
+            interaction_ui["left_message"] = ""
+            interaction_ui["alpha"] = 0
+            return
         turret_pos = (x, y)
         if tile == TURRET:
             level = turret_levels.get(turret_pos, 1)
-            refund = 3  # Flat refund since no upgrades
+            refund = 3
             set_tile(x, y, LAND)
             wood += refund
             turrets_placed = max(0, turrets_placed - 1)
@@ -1254,42 +1460,6 @@ def interact(button):
             turret_levels[turret_pos] = 1
             turret_xp[turret_pos] = 0
             sound_place_turret.play()
-        return
-
-    if tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
-        set_tile(x, y, BOAT_TILE)
-        wood -= 3
-        tiles_placed += 1
-        sound_place_land.play()
-    elif tile == LOOT:
-        wood_gained = random.randint(5, 10)
-        wood += wood_gained
-        set_tile(x, y, LAND)
-        wood_texts.append({
-            "x": x,
-            "y": y,
-            "text": f"+{wood_gained} Wood",
-            "timer": 1000,
-            "alpha": 255
-        })
-    elif tile == TREE:
-        set_tile(x, y, LAND)
-        wood_gained = random.randint(2, 4)
-        wood += wood_gained
-        wood_texts.append({
-            "x": x,
-            "y": y,
-            "text": f"+{wood_gained} Wood",
-            "timer": 1000,
-            "alpha": 255
-        })
-    elif tile == SAPLING:
-        set_tile(x, y, LAND)
-        wood += 1
-        if (x, y) in tree_growth:
-            del tree_growth[(x, y)]
-    else:
-        plant_sapling()
 
 def update_interaction_ui():
     global interaction_ui, stationary_timer, last_player_pos
@@ -1299,7 +1469,7 @@ def update_interaction_ui():
         interaction_ui["fade_timer"] = 0
         return
 
-    # Check if the player has moved (optional, can remove if not needed)
+    # Check if the player has moved
     current_pos = list(player_pos)
     if current_pos != last_player_pos:
         interaction_ui["alpha"] = 0
@@ -1316,7 +1486,6 @@ def update_interaction_ui():
             interaction_ui["fade_timer"] = 0
             return
 
-    # Use the selected tile instead of player position
     if not selected_tile:
         interaction_ui["left_message"] = ""
         interaction_ui["right_message"] = ""
@@ -1327,9 +1496,16 @@ def update_interaction_ui():
 
     x, y = selected_tile
     tile = get_tile(x, y)
-
     interaction_ui["left_message"] = ""
     interaction_ui["right_message"] = ""
+
+    # Show wall placement message when hovering over NPC in wall placement mode
+    if wall_placement_mode:
+        for npc in npcs:
+            if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
+                interaction_ui["left_message"] = "Click a land tile to place a wall\n-100 Wood\nRight click to cancel"
+                interaction_ui["alpha"] = 255
+                return
 
     if tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
         interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood\n(Next to Boat/Land)"
@@ -1340,7 +1516,6 @@ def update_interaction_ui():
     elif tile == SAPLING:
         interaction_ui["left_message"] = "Uproot\n+1 Wood"
     elif tile == BOAT_TILE:
-        # Check if the player is on the tile to show the message
         if player_pos[0] == x and player_pos[1] == y:
             interaction_ui["left_message"] = "Cannot remove\nwhile standing on tile"
         else:
@@ -1390,7 +1565,7 @@ def try_move(dx, dy):
     x, y = player_pos[0] + dx, player_pos[1] + dy
     facing = [dx, dy]
     if now - player_move_timer > player_move_delay:
-        if get_tile(x, y) not in [WATER, TREE]:
+        if get_tile(x, y) not in [WATER, TREE, WALL]:
             old_chunk = player_chunk
             player_pos[0], player_pos[1] = x, y
             player_chunk = world_to_chunk(x, y)
@@ -1456,8 +1631,14 @@ while running:
     update_land_spread()
     update_interaction_ui()
     update_pirates()
+    update_npcs()
     update_turrets()
     update_projectiles()
+    
+
+    if wood >= 100 and not waller_npc_spawned:
+        spawn_waller_npc()
+        waller_npc_spawned = True
 
     pirate_spawn_timer += clock.get_time()
     if pirate_spawn_timer >= spawn_delay:
