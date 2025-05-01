@@ -1062,6 +1062,15 @@ def update_xp_texts():
         text["alpha"] = int((text["timer"] / 1000) * 255)
         text["alpha"] = max(0, min(255, text["alpha"]))
 
+def has_adjacent_boat_or_land(x, y):
+    # Check if the tile at (x, y) has a BOAT_TILE or LAND tile in cardinal directions.
+    neighbors = [(x, y-1), (x, y+1), (x-1, y), (x+1, y)]  # Up, down, left, right
+    for nx, ny in neighbors:
+        tile = get_tile(nx, ny)
+        if tile in [BOAT_TILE, LAND]:
+            return True
+    return False
+
 def interact(button):
     global wood, tiles_placed, turrets_placed
     if not selected_tile:
@@ -1092,7 +1101,7 @@ def interact(button):
             sound_place_turret.play()
         return
 
-    if tile == WATER and wood >= 3:
+    if tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
         set_tile(x, y, BOAT_TILE)
         wood -= 3
         tiles_placed += 1
@@ -1180,8 +1189,8 @@ def update_interaction_ui():
     interaction_ui["left_message"] = ""
     interaction_ui["right_message"] = ""
 
-    if tile == WATER and wood >= 1:
-        interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood"
+    if tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
+        interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood\n(Next to Boat/Land)"
     elif tile == LOOT:
         interaction_ui["left_message"] = "Collect\n+5-10 Wood"
     elif tile == TREE:
