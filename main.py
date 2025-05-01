@@ -947,16 +947,6 @@ def update_projectiles():
                         p["pirates"].remove(pirate)
                         pirates_killed += 1
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
-                        for _ in range(5):
-                            spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])
-                            spark_vel = [random.uniform(-0.05, 0.05), random.uniform(-0.05, 0.05)]
-                            sparks.append({
-                                "x": pirate["x"],
-                                "y": pirate["y"],
-                                "vel": spark_vel,
-                                "timer": 150,
-                                "color": spark_color
-                            })
                         turret_id = proj.get("turret_id")
                         if turret_id and turret_id in turret_levels:
                             xp_value = pirate["xp_value"]
@@ -981,15 +971,6 @@ def update_projectiles():
             for s in p["ship"][:]:
                 if abs(proj["x"] - s["x"]) < 0.3 and abs(proj["y"] - s["y"]) < 0.3:
                     p["ship"].remove(s)
-                    wood_gained = random.randint(5, 10)
-                    wood += wood_gained
-                    wood_texts.append({
-                        "x": s["x"],
-                        "y": s["y"],
-                        "text": f"+{wood_gained} Wood",
-                        "timer": 1000,
-                        "alpha": 255
-                    })
                     hit = True
                     break
                 if hit:
