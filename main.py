@@ -94,10 +94,15 @@ water_frame_timer = 0
 water_frame_delay = 1200
 
 player_image = pygame.image.load("Assets/player.png").convert_alpha()
-pirate_hat_image = pygame.image.load("Assets/pirate_hat.png").convert_alpha()
+# Load base pirate (hatless) and level-specific pirates and hats
 pirate_sprites = {
-    "full_health": pygame.image.load("Assets/pirate.png").convert_alpha(),
-    "low_health": pygame.image.load("Assets/pirate2.png").convert_alpha()
+    "base": pygame.image.load("Assets/pirate/pirate.png").convert_alpha()
+}
+for level in range(1, 11):
+    pirate_sprites[f"level_{level}"] = pygame.image.load(f"Assets/pirate/pirate{level}.png").convert_alpha()
+
+pirate_hat_images = {
+    level: pygame.image.load(f"Assets/pirate/pirate_hat{level}.png").convert_alpha() for level in range(1, 11)
 }
 
 # Load high score
@@ -303,12 +308,13 @@ wood_texts = []  # List to store floating wood gain texts
 
 turret_cooldowns = {}
 turret_levels = {}
+turret_xp = {}
 BASE_TURRET_FIRE_RATE = 1000
 TURRET_MAX_LEVEL = 99
-XP_PER_PIRATE = 1
+TURRET_RANGE = 4
 
-# Add turret_xp dictionary to track experience
-turret_xp = {}
+projectiles = []
+projectile_speed = 0.2
 
 tree_growth = {}
 sapling_growth_time = 30000
@@ -318,9 +324,7 @@ pirate_spawn_timer = 0
 spawn_delay = 5000
 pirate_walk_delay = 300
 
-projectiles = []
-projectile_speed = 0.2
-TURRET_RANGE = 4
+
 
 game_surface = pygame.Surface((WIDTH, HEIGHT))
 
@@ -402,8 +406,11 @@ def draw_grid():
             px = pirate["x"] - top_left_x
             py = pirate["y"] - top_left_y
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-                health_ratio = pirate["health"] / pirate["max_health"]
-                pirate_image = pirate_sprites["full_health"] if health_ratio > 0.5 else pirate_sprites["low_health"]
+                level = pirate["level"]
+                if pirate["health"] > 1:
+                    pirate_image = pirate_sprites[f"level_{level}"]  # Hatted sprite
+                else:
+                    pirate_image = pirate_sprites["base"]  # Hatless at 1 health
                 game_surface.blit(pygame.transform.scale(pirate_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
 
         if p["state"] == "landed":
@@ -451,7 +458,9 @@ def draw_grid():
         px = hat["x"] - top_left_x
         py = hat["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            rotated_hat = pygame.transform.rotate(pirate_hat_image, hat["rotation"])
+            hat_level = hat["level"]
+            hat_image = pirate_hat_images[hat_level]
+            rotated_hat = pygame.transform.rotate(hat_image, hat["rotation"])
             scaled_hat = pygame.transform.scale(rotated_hat, (TILE_SIZE, TILE_SIZE))
             alpha = int((hat["timer"] / hat["initial_timer"]) * 255)
             alpha = max(0, min(255, alpha))
@@ -640,7 +649,16 @@ def spawn_pirate():
     score = turrets_placed + pirates_killed + tiles_placed
     min_blocks = max(3, 1 + score // 10)
     max_blocks = max(min_blocks, 1 + score // 5)
-    block_count = random.randint(min_blocks, max_blocks)
+    equivalent_level_1_pirates = random.randint(min_blocks, max_blocks)
+
+    # Convert equivalent_level_1_pirates to a list of pirate levels
+    pirate_levels = []
+    remaining = equivalent_level_1_pirates
+    while remaining > 0:
+        # Find the highest level where 2^(level-1) <= remaining
+        level = min(10, int(math.log2(max(1, remaining))) + 1)
+        pirate_levels.append(level)
+        remaining -= 2 ** (level - 1)  # Subtract the equivalent level 1 pirates
 
     # Get loaded chunks, excluding the player's chunk
     cx, cy = player_chunk
@@ -666,6 +684,7 @@ def spawn_pirate():
     x, y = random.choice(water_tiles)
 
     # Build the ship with flood-fill
+    block_count = max(3, len(pirate_levels))  # Ensure enough tiles for pirates
     ship_tiles = set()
     frontier = [(x, y)]
     while len(ship_tiles) < block_count and frontier:
@@ -677,16 +696,33 @@ def spawn_pirate():
             frontier.extend(neighbors)
     ship_tiles = list(ship_tiles)
 
-    # Check if ship_tiles is empty
     if not ship_tiles:
         print("No connected water tiles for ship!")
         return
 
-    # Calculate pirate_count, ensuring it doesn't exceed len(ship_tiles)
-    pirate_count = min(max(1, len(ship_tiles) // 3), len(ship_tiles))
-    pirate_positions = random.sample(ship_tiles, pirate_count)
+    # Assign pirates to ship tiles
+    pirate_positions = random.sample(ship_tiles, min(len(pirate_levels), len(ship_tiles)))
+    pirates_data = []
+    for i, (px, py) in enumerate(pirate_positions):
+        level = pirate_levels[i]
+        max_health = 2 ** level  # 2^1 = 2 for level 1, 2^2 = 4 for level 2, etc.
+        xp_value = 2 ** (level - 1)  # 2^0 = 1 for level 1, 2^1 = 2 for level 2, etc.
+        pirates_data.append({
+            "x": float(px),
+            "y": float(py),
+            "start_x": float(px),
+            "start_y": float(py),
+            "target_x": float(px),
+            "target_y": float(py),
+            "move_progress": 1.0,
+            "move_duration": 300,
+            "health": max_health,
+            "max_health": max_health,
+            "xp_value": xp_value,
+            "level": level
+        })
 
-    # Calculate direction toward the player instead of loot
+    # Calculate direction toward the player
     dx = player_pos[0] - x
     dy = player_pos[1] - y
     length = max(abs(dx), abs(dy)) or 1
@@ -698,20 +734,7 @@ def spawn_pirate():
         "dir": direction,
         "state": "boat",
         "ship": [{"x": sx, "y": sy} for sx, sy in ship_tiles],
-        "pirates": [
-            {
-                "x": float(px),
-                "y": float(py),
-                "start_x": float(px),
-                "start_y": float(py),
-                "target_x": float(px),
-                "target_y": float(py),
-                "move_progress": 1.0,
-                "move_duration": 300,
-                "health": 2,
-                "max_health": 2
-            } for px, py in pirate_positions
-        ]
+        "pirates": pirates_data
     })
 
 def update_pirates():
@@ -881,7 +904,7 @@ def update_sparks():
 
 def update_projectiles():
     global pirates_killed, wood
-    import math  # Add for pow()
+    import math
     for proj in projectiles[:]:
         next_x = proj["x"] + proj["dir"][0] * projectile_speed
         next_y = proj["y"] + proj["dir"][1] * projectile_speed
@@ -920,7 +943,8 @@ def update_projectiles():
                             "rotation": 0,
                             "rotation_speed": random.uniform(-10, 10),
                             "timer": 1000,
-                            "initial_timer": 1000
+                            "initial_timer": 1000,
+                            "level": pirate["level"]  # Store pirate level for hat sprite
                         })
                     if pirate["health"] <= 0:
                         p["pirates"].remove(pirate)
@@ -938,16 +962,17 @@ def update_projectiles():
                             })
                         turret_id = proj.get("turret_id")
                         if turret_id and turret_id in turret_levels:
-                            turret_xp[turret_id] = turret_xp.get(turret_id, 0) + XP_PER_PIRATE
+                            xp_value = pirate["xp_value"]
+                            turret_xp[turret_id] = turret_xp.get(turret_id, 0) + xp_value
                             xp_texts.append({
                                 "x": turret_id[0],
                                 "y": turret_id[1],
-                                "text": f"+{XP_PER_PIRATE} XP",
+                                "text": f"+{xp_value} XP",
                                 "timer": 1000,
                                 "alpha": 255
                             })
                             level = turret_levels[turret_id]
-                            xp_needed = math.pow(2, level - 1)  # XP to go from level to level+1
+                            xp_needed = math.pow(2, level - 1)
                             if level < TURRET_MAX_LEVEL and turret_xp[turret_id] >= xp_needed:
                                 turret_levels[turret_id] += 1
                                 turret_xp[turret_id] -= xp_needed
