@@ -99,7 +99,7 @@ RARE_TYPE_COLORS = {
 }
 
 # --- Tile Types ---
-WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT = range(9)
+WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3 = range(11)
 
 # --- Load Tile Images ---
 tile_images = {
@@ -113,7 +113,9 @@ tile_images = {
     USED_LAND: pygame.image.load("Assets/used_land.png").convert(),
     "UNDER_LAND": pygame.image.load("Assets/under_land.png").convert_alpha(),
     "UNDER_WOOD": pygame.image.load("Assets/under_wood.png").convert_alpha(),
-    LOOT: pygame.image.load("Assets/loot.png").convert_alpha()
+    LOOT: pygame.image.load("Assets/loot.png").convert_alpha(),
+    BOAT_TILE_STAGE_2: pygame.image.load("Assets/boat_tile2.png").convert(),
+    BOAT_TILE_STAGE_3: pygame.image.load("Assets/boat_tile3.png").convert()
 }
 
 water_frames = [
@@ -365,6 +367,9 @@ projectile_speed = 0.2
 tree_growth = {}
 sapling_growth_time = 30000
 
+land_spread = {}
+land_spread_time = 30000
+
 pirates = []
 pirate_spawn_timer = 0
 spawn_delay = 5000
@@ -400,7 +405,7 @@ def draw_grid():
                     if under_land_image:
                         under_rect = pygame.Rect(x * TILE_SIZE, (y + 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                         game_surface.blit(pygame.transform.scale(under_land_image, (TILE_SIZE, TILE_SIZE)), under_rect)
-                elif tile == BOAT_TILE:
+                elif tile in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
                     under_wood_image = tile_images.get("UNDER_WOOD")
                     if under_wood_image:
                         under_rect = pygame.Rect(x * TILE_SIZE, (y + 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -428,7 +433,7 @@ def draw_grid():
             sx = s["x"] - top_left_x
             sy = s["y"] - top_left_y
             if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
-                boat_tile_image = tile_images.get(BOAT_TILE)
+                boat_tile_image = tile_images.get(BOAT_TILE)  # Ships always use BOAT_TILE
                 if boat_tile_image:
                     game_surface.blit(pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
     px = player_pos[0] - top_left_x
@@ -571,7 +576,9 @@ def draw_minimap():
                             TURRET: YELLOW,
                             BOAT_TILE: TAN,
                             USED_LAND: LIGHT_GRAY,
-                            LOOT: ORANGE
+                            LOOT: ORANGE,
+                            BOAT_TILE_STAGE_2: (180, 200, 140),  # Between TAN and GREEN
+                            BOAT_TILE_STAGE_3: (115, 220, 140)   # Closer to GREEN
                         }.get(tile, BLACK)
                         world_x, world_y = chunk_to_world(cx + dx, cy + dy, mx, my)
                         if (world_x, world_y) == tuple(player_pos):
@@ -675,6 +682,50 @@ def screen_to_world(mouse_x, mouse_y):
     world_tile_y = tile_y + top_left_y
 
     return world_tile_x, world_tile_y
+
+def update_land_spread():
+    now = pygame.time.get_ticks()
+    top_left_x = player_pos[0] - VIEW_WIDTH // 2
+    top_left_y = player_pos[1] - VIEW_HEIGHT // 2
+
+    # Step 1: Find BOAT_TILE tiles adjacent to LAND and add to land_spread
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            gx, gy = top_left_x + x, top_left_y + y
+            tile = get_tile(gx, gy)
+            if tile == BOAT_TILE:
+                # Check cardinal neighbors for LAND
+                neighbors = [(gx, gy-1), (gx, gy+1), (gx-1, gy), (gx+1, gy)]
+                has_land = False
+                for nx, ny in neighbors:
+                    if get_tile(nx, ny) == LAND:
+                        has_land = True
+                        break
+                if has_land and (gx, gy) not in land_spread:
+                    land_spread[(gx, gy)] = {"start_time": now, "stage": 0}
+
+    # Step 2: Update stages for tiles in land_spread
+    for pos in list(land_spread.keys()):
+        data = land_spread[pos]
+        gx, gy = pos
+        # Check if the tile is still a BOAT_TILE or in a spreading stage
+        current_tile = get_tile(gx, gy)
+        if current_tile not in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
+            del land_spread[pos]  # Tile changed (e.g., player removed it)
+            continue
+        elapsed = now - data["start_time"]
+        stages_passed = elapsed // land_spread_time
+        new_stage = min(stages_passed, 3)  # Cap at stage 3 (LAND)
+
+        if new_stage != data["stage"]:
+            data["stage"] = new_stage
+            if new_stage == 1:
+                set_tile(gx, gy, BOAT_TILE_STAGE_2)
+            elif new_stage == 2:
+                set_tile(gx, gy, BOAT_TILE_STAGE_3)
+            elif new_stage == 3:
+                set_tile(gx, gy, LAND)
+                del land_spread[pos]  # Conversion complete
 
 def spawn_pirate():
     global pirates
@@ -1237,19 +1288,6 @@ def interact(button):
         wood += 1
         if (x, y) in tree_growth:
             del tree_growth[(x, y)]
-    elif tile == BOAT_TILE:
-        if player_pos[0] == x and player_pos[1] == y:
-            return
-        set_tile(x, y, WATER)
-        wood_gained = 1
-        wood += wood_gained
-        wood_texts.append({
-            "x": x,
-            "y": y,
-            "text": f"+{wood_gained} Wood",
-            "timer": 1000,
-            "alpha": 255
-        })
     else:
         plant_sapling()
 
@@ -1415,6 +1453,7 @@ while running:
     pygame.display.flip()
 
     update_trees()
+    update_land_spread()
     update_interaction_ui()
     update_pirates()
     update_turrets()
