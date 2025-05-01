@@ -14,24 +14,25 @@ pygame.mixer.init()
 # Define the chunk directory path
 CHUNK_DIR = "chunks"
 
-# Create the directory if it doesn't exist
-if not os.path.exists(CHUNK_DIR):
-    try:
-        os.makedirs(CHUNK_DIR)
-    except OSError as e:
-        print(f"Error: Could not create chunk directory: {e}")
-        sys.exit(1)
+def clear_chunk_files():
+    if not os.path.exists(CHUNK_DIR):
+        try:
+            os.makedirs(CHUNK_DIR)
+        except OSError as e:
+            print(f"Error: Could not create chunk directory: {e}")
+            return
+    for filename in os.listdir(CHUNK_DIR):
+        file_path = os.path.join(CHUNK_DIR, filename)
+        try:
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        except PermissionError as e:
+            print(f"Warning: Could not delete file {file_path} due to permission error: {e}")
+        except OSError as e:
+            print(f"Warning: Could not delete file {file_path}: {e}")
 
 # Delete all files inside the chunks directory
-for filename in os.listdir(CHUNK_DIR):
-    file_path = os.path.join(CHUNK_DIR, filename)
-    try:
-        if os.path.isfile(file_path):
-            os.remove(file_path)
-    except PermissionError as e:
-        print(f"Warning: Could not delete file {file_path} due to permission error: {e}")
-    except OSError as e:
-        print(f"Warning: Could not delete file {file_path}: {e}")
+clear_chunk_files()
 
 SCALE = 2
 MIN_SCALE = 1
@@ -194,10 +195,6 @@ def generate_chunk(cx, cy):
                 chunk[ty][tx] = LOOT
 
     return chunk
-
-def delete_chunks():
-    if os.path.exists(CHUNK_DIR):
-        shutil.rmtree(CHUNK_DIR)
 
 def get_tile(x, y):
     cx, cy = world_to_chunk(x, y)
@@ -1113,7 +1110,7 @@ def interact(button):
             sound_place_turret.play()
         return
 
-    if tile == WATER and wood >= 1:
+    if tile == WATER and wood >= 3:
         set_tile(x, y, BOAT_TILE)
         wood -= 3
         tiles_placed += 1
@@ -1131,7 +1128,7 @@ def interact(button):
         })
     elif tile == TREE:
         set_tile(x, y, LAND)
-        wood_gained = 3
+        wood_gained = random.randint(2, 4)
         wood += wood_gained
         wood_texts.append({
             "x": x,
@@ -1275,17 +1272,17 @@ while running:
             fade_done = True
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                delete_chunks()
+                clear_chunk_files()
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    delete_chunks()
+                    clear_chunk_files()
                     pygame.quit()
                     sys.exit()
                 elif event.key == pygame.K_SPACE:
                     subprocess.Popen([sys.executable, os.path.abspath(__file__)])
-                    delete_chunks()
+                    clear_chunk_files()
                     pygame.quit()
                     sys.exit()
         continue
