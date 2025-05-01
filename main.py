@@ -31,6 +31,27 @@ def clear_chunk_files():
         except OSError as e:
             print(f"Warning: Could not delete file {file_path}: {e}")
 
+def adjust_sprite_for_rare(sprite):
+    """Overlay a bright red color at 50% opacity on the sprite, preserving alpha."""
+    new_sprite = sprite.copy()
+    pixel_array = pygame.PixelArray(new_sprite)
+    red_color = pygame.Color(255, 0, 0)  # Bright red
+    overlay_alpha = 0.5  # 50% opacity
+    for x in range(new_sprite.get_width()):
+        for y in range(new_sprite.get_height()):
+            color = new_sprite.unmap_rgb(pixel_array[x, y])
+            if color.a == 0:  # Skip transparent pixels
+                continue
+            # Blend original color with red at 50% opacity
+            new_r = int(color.r * (1 - overlay_alpha) + red_color.r * overlay_alpha)
+            new_g = int(color.g * (1 - overlay_alpha) + red_color.g * overlay_alpha)
+            new_b = int(color.b * (1 - overlay_alpha) + red_color.b * overlay_alpha)
+            # Preserve original alpha
+            new_color = pygame.Color(new_r, new_g, new_b, color.a)
+            pixel_array[x, y] = new_color
+    del pixel_array
+    return new_sprite
+
 # Delete all files inside the chunks directory
 clear_chunk_files()
 
@@ -49,6 +70,7 @@ explosions = []
 sparks = []
 hat_particles = []
 
+
 # --- Sounds ---
 sound_place_land = pygame.mixer.Sound("Assets/sound/place_land.wav")
 sound_plant_sapling = pygame.mixer.Sound("Assets/sound/plant_sapling.wav")
@@ -66,6 +88,8 @@ RED = (255, 0, 0)
 ORANGE = (255, 165, 0)
 TAN = (210, 180, 140)
 LIGHT_GRAY = (200, 200, 200)
+
+RARE_PIRATE_TYPES = ["bridge_builder", "turret_breaker", "tanky", "speedy", "explosive"]
 
 # --- Tile Types ---
 WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT = range(9)
@@ -97,10 +121,12 @@ water_frame_delay = 1200
 player_image = pygame.image.load("Assets/player.png").convert_alpha()
 # Load base pirate (hatless) and level-specific pirates and hats
 pirate_sprites = {
-    "base": pygame.image.load("Assets/pirate/pirate.png").convert_alpha()
+    "base": pygame.image.load("Assets/pirate/pirate.png").convert_alpha(),
+    "base_rare": adjust_sprite_for_rare(pygame.image.load("Assets/pirate/pirate.png").convert_alpha())
 }
 for level in range(1, 11):
     pirate_sprites[f"level_{level}"] = pygame.image.load(f"Assets/pirate/pirate{level}.png").convert_alpha()
+    pirate_sprites[f"level_{level}_rare"] = adjust_sprite_for_rare(pygame.image.load(f"Assets/pirate/pirate{level}.png").convert_alpha())
 
 pirate_hat_images = {
     level: pygame.image.load(f"Assets/pirate/pirate_hat{level}.png").convert_alpha() for level in range(1, 11)
@@ -337,7 +363,6 @@ game_surface = pygame.Surface((WIDTH, HEIGHT))
 def draw_grid():
     top_left_x = player_pos[0] - VIEW_WIDTH // 2
     top_left_y = player_pos[1] - VIEW_HEIGHT // 2
-
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
@@ -348,7 +373,6 @@ def draw_grid():
                 game_surface.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
             else:
                 pygame.draw.rect(game_surface, BLACK, rect)
-
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
@@ -366,7 +390,6 @@ def draw_grid():
                     if under_wood_image:
                         under_rect = pygame.Rect(x * TILE_SIZE, (y + 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                         game_surface.blit(pygame.transform.scale(under_wood_image, (TILE_SIZE, TILE_SIZE)), under_rect)
-
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
@@ -385,7 +408,6 @@ def draw_grid():
                 level_text = font.render(str(level), True, WHITE)
                 text_rect = level_text.get_rect(center=(x * TILE_SIZE + TILE_SIZE // 2, y * TILE_SIZE - 10))
                 game_surface.blit(level_text, text_rect)
-
     for p in pirates:
         for s in p["ship"]:
             sx = s["x"] - top_left_x
@@ -394,26 +416,23 @@ def draw_grid():
                 boat_tile_image = tile_images.get(BOAT_TILE)
                 if boat_tile_image:
                     game_surface.blit(pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
-
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
-    if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:  # Only draw if in view
+    if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
         game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
-
     draw_interaction_ui()
-
     for p in pirates:
         for pirate in p.get("pirates", []):
             px = pirate["x"] - top_left_x
             py = pirate["y"] - top_left_y
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
                 level = pirate["level"]
-                if pirate["health"] > 1:
-                    pirate_image = pirate_sprites[f"level_{level}"]
-                else:
-                    pirate_image = pirate_sprites["base"]
+                is_rare = pirate.get("is_rare", False)
+                sprite_key = f"level_{level}_rare" if is_rare and pirate["health"] > 1 else \
+                             f"level_{level}" if pirate["health"] > 1 else \
+                             "base_rare" if is_rare else "base"
+                pirate_image = pirate_sprites[sprite_key]
                 game_surface.blit(pygame.transform.scale(pirate_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
-
         if p["state"] == "landed":
             px = p["x"] - top_left_x
             py = p["y"] - top_left_y
@@ -422,7 +441,6 @@ def draw_grid():
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
-
     if selected_tile:
         sel_x, sel_y = selected_tile
         sel_px = sel_x - top_left_x
@@ -431,7 +449,6 @@ def draw_grid():
             overlay_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
             overlay_surface.fill((0, 0, 0, 128))
             game_surface.blit(overlay_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
-
     for text in wood_texts:
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
@@ -441,7 +458,6 @@ def draw_grid():
             text_surface.set_alpha(text["alpha"])
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
             game_surface.blit(text_surface, text_rect)
-
     for text in xp_texts:
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
@@ -451,7 +467,6 @@ def draw_grid():
             text_surface.set_alpha(text["alpha"])
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
             game_surface.blit(text_surface, text_rect)
-
     for hat in hat_particles:
         px = hat["x"] - top_left_x
         py = hat["y"] - top_left_y
@@ -467,7 +482,6 @@ def draw_grid():
             hat_surface.set_alpha(alpha)
             hat_rect = hat_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE + TILE_SIZE // 2))
             game_surface.blit(hat_surface, hat_rect.topleft)
-
     for explosion in explosions[:]:
         explosion["timer"] -= clock.get_time()
         if explosion["timer"] <= 0:
@@ -480,7 +494,6 @@ def draw_grid():
             explosion_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
             pygame.draw.circle(explosion_surface, (255, 0, 0, alpha), (TILE_SIZE // 2, TILE_SIZE // 2), TILE_SIZE // 2)
             game_surface.blit(explosion_surface, (px * TILE_SIZE, py * TILE_SIZE))
-
     if sparks:
         spark_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         for spark in sparks:
@@ -493,12 +506,11 @@ def draw_grid():
                 pygame.draw.circle(spark_surface, (*spark["color"], alpha),
                                    (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 2)
         game_surface.blit(spark_surface, (0, 0))
-
     for proj in projectiles:
         px = proj["x"] - top_left_x
         py = proj["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            pygame.draw.circle(game_surface, DARK_GRAY, (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 4)
+            pygame.draw.circle(game_surface, DARK_GRAY, (int(px * TILE_SIZE + TILE_SIZE // 2), int(px * TILE_SIZE + TILE_SIZE // 2)), 4)
 
 def draw_ui():
     font = pygame.font.SysFont(None, 28)
@@ -649,21 +661,16 @@ def spawn_pirate():
     max_blocks = max(min_blocks, 1 + score // 5)
     equivalent_level_1_pirates = random.randint(min_blocks, max_blocks)
 
-    # Convert equivalent_level_1_pirates to a list of pirate levels
     pirate_levels = []
     remaining = equivalent_level_1_pirates
     while remaining > 0:
-        # Find the highest level where 2^(level-1) <= remaining
         level = min(10, int(math.log2(max(1, remaining))) + 1)
         pirate_levels.append(level)
-        remaining -= 2 ** (level - 1)  # Subtract the equivalent level 1 pirates
+        remaining -= 2 ** (level - 1)
 
-    # Get loaded chunks, excluding the player's chunk
     cx, cy = player_chunk
     loaded_chunks = [(cx + dx, cy + dy) for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
                      for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1) if (dx, dy) != (0, 0)]
-
-    # Collect water tiles in loaded chunks
     water_tiles = []
     for chunk_key in loaded_chunks:
         if chunk_key in chunks:
@@ -673,16 +680,12 @@ def spawn_pirate():
                     if chunk[ty][tx] == WATER:
                         world_x, world_y = chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
                         water_tiles.append((world_x, world_y))
-
     if not water_tiles:
         print("No water tiles available for spawning!")
         return
-
-    # Pick a random water tile as the starting point
     x, y = random.choice(water_tiles)
 
-    # Build the ship with flood-fill
-    block_count = max(3, len(pirate_levels))  # Ensure enough tiles for pirates
+    block_count = max(3, len(pirate_levels))
     ship_tiles = set()
     frontier = [(x, y)]
     while len(ship_tiles) < block_count and frontier:
@@ -693,18 +696,21 @@ def spawn_pirate():
             random.shuffle(neighbors)
             frontier.extend(neighbors)
     ship_tiles = list(ship_tiles)
-
     if not ship_tiles:
         print("No connected water tiles for ship!")
         return
 
-    # Assign pirates to ship tiles
     pirate_positions = random.sample(ship_tiles, min(len(pirate_levels), len(ship_tiles)))
     pirates_data = []
     for i, (px, py) in enumerate(pirate_positions):
         level = pirate_levels[i]
-        max_health = 2 ** level  # 2^1 = 2 for level 1, 2^2 = 4 for level 2, etc.
-        xp_value = 2 ** (level - 1)  # 2^0 = 1 for level 1, 2^1 = 2 for level 2, etc.
+        is_rare = random.random() < 1/15  # 1 in 15 chance
+        rare_type = random.choice(RARE_PIRATE_TYPES) if is_rare else None
+        max_health = 2 ** level
+        if is_rare and rare_type == "tanky":
+            max_health *= 2  # Double health for Tanky
+        xp_value = 2 ** (level - 1) * (2 if is_rare else 1)  # Double XP for rare
+        move_duration = 300 if not (is_rare and rare_type == "speedy") else 150  # Half duration for Speedy
         pirates_data.append({
             "x": float(px),
             "y": float(py),
@@ -713,14 +719,15 @@ def spawn_pirate():
             "target_x": float(px),
             "target_y": float(py),
             "move_progress": 1.0,
-            "move_duration": 300,
+            "move_duration": move_duration,
             "health": max_health,
             "max_health": max_health,
             "xp_value": xp_value,
-            "level": level
+            "level": level,
+            "is_rare": is_rare,
+            "rare_type": rare_type
         })
 
-    # Calculate direction toward the player
     dx = player_pos[0] - x
     dy = player_pos[1] - y
     length = max(abs(dx), abs(dy)) or 1
@@ -736,7 +743,7 @@ def spawn_pirate():
     })
 
 def update_pirates():
-    global game_over
+    global game_over, pirates
     now = pygame.time.get_ticks()
     for p in pirates[:]:
         if p["state"] == "boat":
@@ -756,7 +763,6 @@ def update_pirates():
                 pirate["move_progress"] = 1.0
             nx = p["x"] + p["dir"][0] * 0.05
             ny = p["y"] + p["dir"][1] * 0.05
-
             landed = False
             landing_tile = None
             for s in p["ship"]:
@@ -765,7 +771,6 @@ def update_pirates():
                     landed = True
                     landing_tile = (sx, sy)
                     break
-
             if landed:
                 for s in p["ship"]:
                     sx, sy = int(round(s["x"])), int(round(s["y"]))
@@ -777,7 +782,6 @@ def update_pirates():
                 p["x"], p["y"] = landing_tile
             else:
                 p["x"], p["y"] = nx, ny
-
         elif p["state"] == "landed":
             if now - p["land_time"] >= 1000:
                 p["state"] = "walk"
@@ -788,47 +792,93 @@ def update_pirates():
                     pirate["target_x"] = pirate["x"]
                     pirate["target_y"] = pirate["y"]
                     pirate["move_progress"] = 1.0
-
         else:  # "walk" state
             if "walk_timer" not in p:
                 p["walk_timer"] = 0
-
             for pirate in p["pirates"]:
                 if pirate["move_progress"] < 1.0:
                     elapsed = clock.get_time()
                     pirate["move_progress"] = min(1.0, pirate["move_progress"] + elapsed / pirate["move_duration"])
                     pirate["x"] = pirate["start_x"] + (pirate["target_x"] - pirate["start_x"]) * pirate["move_progress"]
                     pirate["y"] = pirate["start_y"] + (pirate["target_y"] - pirate["start_y"]) * pirate["move_progress"]
-
             if now - p["walk_timer"] < pirate_walk_delay:
                 continue
-
             for pirate in p["pirates"]:
-                # Check if the pirate touches the player
-                dist = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
-                if dist < 0.5:  # Reduced distance threshold for "touching"
-                    game_over = True
-                    return
-
+                is_rare = pirate.get("is_rare", False)
+                rare_type = pirate.get("rare_type", None)
+                # Explosive: Check if near player and explode
+                if is_rare and rare_type == "explosive":
+                    dist = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
+                    if dist < 1.0:
+                        # Explode: Set 3x3 grid to WATER
+                        px, py = int(pirate["x"]), int(pirate["y"])
+                        for dy in range(-1, 2):
+                            for dx in range(-1, 2):
+                                tx, ty = px + dx, py + dy
+                                if get_tile(tx, ty) != WATER:
+                                    set_tile(tx, ty, WATER)
+                        explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
+                        p["pirates"].remove(pirate)
+                        pirates_killed += 1
+                        continue
+                # Check if pirate touches the player (normal or non-turret_breaker)
+                if not (is_rare and rare_type == "turret_breaker"):
+                    dist = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
+                    if dist < 0.5:
+                        game_over = True
+                        return
                 if pirate["move_progress"] >= 1.0:
-                    # Move toward the player instead of the loot
-                    dx = player_pos[0] - pirate["x"]
-                    dy = player_pos[1] - pirate["y"]
+                    # Turret Breaker: Target nearest turret
+                    target_x, target_y = pirate["x"], pirate["y"]
+                    if is_rare and rare_type == "turret_breaker":
+                        nearest_turret = None
+                        min_dist = float("inf")
+                        for y in range(-VIEW_WIDTH // 2, VIEW_WIDTH // 2 + 1):
+                            for x in range(-VIEW_WIDTH // 2, VIEW_WIDTH // 2 + 1):
+                                tx = int(pirate["x"]) + x
+                                ty = int(pirate["y"]) + y
+                                if get_tile(tx, ty) == TURRET:
+                                    dist = math.hypot(tx - pirate["x"], ty - pirate["y"])
+                                    if dist < min_dist:
+                                        min_dist = dist
+                                        nearest_turret = (tx, ty)
+                        if nearest_turret:
+                            target_x, target_y = nearest_turret
+                        else:
+                            target_x, target_y = player_pos[0], player_pos[1]  # Fallback to player
+                    else:
+                        target_x, target_y = player_pos[0], player_pos[1]
+                    # Calculate movement direction
+                    dx = target_x - pirate["x"]
+                    dy = target_y - pirate["y"]
                     primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
                     alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
-
                     def can_walk(x, y):
-                        if get_tile(x, y) in [TREE, WATER]:
+                        tile = get_tile(x, y)
+                        if tile in [TREE, WATER]:
                             return False
                         for other_p in pirates:
                             for other_pirate in other_p["pirates"]:
                                 if other_pirate is not pirate and int(other_pirate["x"]) == x and int(other_pirate["y"]) == y:
                                     return False
                         return True
-
                     moved = False
                     tx, ty = int(pirate["x"] + primary[0]), int(pirate["y"] + primary[1])
-                    if can_walk(tx, ty):
+                    # Bridge Builder: Place BOAT_TILE if WATER and adjacent
+                    if is_rare and rare_type == "bridge_builder" and get_tile(tx, ty) == WATER:
+                        if has_adjacent_boat_or_land(tx, ty):
+                            set_tile(tx, ty, BOAT_TILE)
+                    # Turret Breaker: Destroy turret if reached
+                    if is_rare and rare_type == "turret_breaker" and get_tile(tx, ty) == TURRET:
+                        set_tile(tx, ty, LAND)
+                        if (tx, ty) in turret_cooldowns:
+                            del turret_cooldowns[(tx, ty)]
+                        if (tx, ty) in turret_levels:
+                            del turret_levels[(tx, ty)]
+                        if (tx, ty) in turret_xp:
+                            del turret_xp[(tx, ty)]
+                        moved = True
+                    elif can_walk(tx, ty):
                         pirate["start_x"] = pirate["x"]
                         pirate["start_y"] = pirate["y"]
                         pirate["target_x"] = tx
@@ -837,26 +887,35 @@ def update_pirates():
                         moved = True
                     else:
                         ax, ay = int(pirate["x"] + alt[0]), int(pirate["y"] + alt[1])
-                        if can_walk(ax, ay):
+                        if is_rare and rare_type == "bridge_builder" and get_tile(ax, ay) == WATER:
+                            if has_adjacent_boat_or_land(ax, ay):
+                                set_tile(ax, ay, BOAT_TILE)
+                        if is_rare and rare_type == "turret_breaker" and get_tile(ax, ay) == TURRET:
+                            set_tile(ax, ay, LAND)
+                            if (ax, ay) in turret_cooldowns:
+                                del turret_cooldowns[(ax, ay)]
+                            if (ax, ay) in turret_levels:
+                                del turret_levels[(ax, ay)]
+                            if (ax, ay) in turret_xp:
+                                del turret_xp[(ax, ay)]
+                            moved = True
+                        elif can_walk(ax, ay):
                             pirate["start_x"] = pirate["x"]
                             pirate["start_y"] = pirate["y"]
                             pirate["target_x"] = ax
                             pirate["target_y"] = ay
                             pirate["move_progress"] = 0.0
                             moved = True
-
                     if not moved:
                         for dx_try, dy_try in [primary, alt]:
                             cx, cy = int(pirate["x"] + dx_try), int(pirate["y"] + dy_try)
                             if get_tile(cx, cy) == TREE:
                                 set_tile(cx, cy, LAND)
                                 break
-
             if p["pirates"]:
                 avg_x = sum(pirate["x"] for pirate in p["pirates"]) / len(p["pirates"])
                 avg_y = sum(pirate["y"] for pirate in p["pirates"]) / len(p["pirates"])
                 p["x"], p["y"] = avg_x, avg_y
-
             p["walk_timer"] = now
 
 def update_turrets():
