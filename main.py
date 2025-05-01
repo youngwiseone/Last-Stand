@@ -231,9 +231,9 @@ def set_tile(x, y, tile_type):
 
 # --- Initialize Starting Area ---
 def initialize_starting_area():
-    """Set up the initial 3x3 chunk area around (0, 0) with a land patch."""
-    for cx in range(-1, 2):
-        for cy in range(-1, 2):
+    """Set up the initial 5x5 chunk area around (0, 0) with a land patch."""
+    for cx in range(-2, 3):  # Changed from -1, 2 to match VIEW_CHUNKS = 5
+        for cy in range(-2, 3):
             chunks[(cx, cy)] = generate_chunk(cx, cy)
     # Ensure a 3x3 land area at the origin
     for y in range(-1, 2):
