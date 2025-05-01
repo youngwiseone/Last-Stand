@@ -39,7 +39,7 @@ MIN_SCALE = 1
 MAX_SCALE = 4
 
 TILE_SIZE = 32
-VIEW_WIDTH, VIEW_HEIGHT = 20, 20
+VIEW_WIDTH, VIEW_HEIGHT = 30, 30
 WIDTH, HEIGHT = VIEW_WIDTH * TILE_SIZE, VIEW_HEIGHT * TILE_SIZE
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 clock = pygame.time.Clock()
@@ -115,9 +115,10 @@ except:
 
 # --- Chunk System ---
 CHUNK_SIZE = 16  # Each chunk is 16x16 tiles
-VIEW_CHUNKS = 3  # Load a 3x3 chunk grid around the player
+VIEW_CHUNKS = 5  # Load a 5x5 chunk grid around the player
 
 chunks = {}  # Dictionary: {(cx, cy): [[tile]]}
+tile_cache = {}  # Dictionary: {(x, y): tile_type}
 player_chunk = (0, 0)  # Player's current chunk
 
 def world_to_chunk(x, y):
@@ -197,6 +198,9 @@ def generate_chunk(cx, cy):
     return chunk
 
 def get_tile(x, y):
+    key = (x, y)
+    if key in tile_cache:
+        return tile_cache[key]
     cx, cy = world_to_chunk(x, y)
     tx, ty = x % CHUNK_SIZE, y % CHUNK_SIZE
     if tx < 0: tx += CHUNK_SIZE
@@ -207,7 +211,9 @@ def get_tile(x, y):
             chunks[(cx, cy)] = loaded_data
         else:
             chunks[(cx, cy)] = generate_chunk(cx, cy)
-    return chunks[(cx, cy)][ty][tx]
+    tile = chunks[(cx, cy)][ty][tx]
+    tile_cache[key] = tile
+    return tile
 
 def set_tile(x, y, tile_type):
     cx, cy = world_to_chunk(x, y)
@@ -221,6 +227,7 @@ def set_tile(x, y, tile_type):
         else:
             chunks[(cx, cy)] = generate_chunk(cx, cy)
     chunks[(cx, cy)][ty][tx] = tile_type
+    tile_cache[(x, y)] = tile_type
 
 # --- Initialize Starting Area ---
 def initialize_starting_area():
@@ -249,27 +256,28 @@ def update_player_chunk():
     player_chunk = world_to_chunk(player_pos[0], player_pos[1])
 
 def manage_chunks():
-    cx, cy = player_chunk  # Player’s current chunk coordinates
+    cx, cy = player_chunk
     loaded_chunks = set()
-    VIEW_CHUNKS = 3  # Example: 3x3 grid around player
-
-    # Load nearby chunks
     for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
         for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
             chunk_key = (cx + dx, cy + dy)
             loaded_chunks.add(chunk_key)
-            if chunk_key not in chunks:  # 'chunks' is your in-memory chunk dictionary
+            if chunk_key not in chunks:
                 loaded_data = load_chunk(cx + dx, cy + dy)
                 if loaded_data is not None:
                     chunks[chunk_key] = loaded_data
                 else:
-                    chunks[chunk_key] = generate_chunk(cx + dx, cy + dy)  # Generate if new
-
-    # Save and unload distant chunks
+                    chunks[chunk_key] = generate_chunk(cx + dx, cy + dy)
     for key in list(chunks.keys()):
         if key not in loaded_chunks:
             save_chunk(key[0], key[1], chunks[key])
-            del chunks[key]  # Remove from memory
+            # Clear cache entries for unloaded chunk
+            cx, cy = key
+            for ty in range(CHUNK_SIZE):
+                for tx in range(CHUNK_SIZE):
+                    wx, wy = chunk_to_world(cx, cy, tx, ty)
+                    tile_cache.pop((wx, wy), None)
+            del chunks[key]
 
 # --- Game State ---
 selected_tile = None  # Will store the (x, y) of the tile under the mouse
@@ -327,11 +335,9 @@ game_surface = pygame.Surface((WIDTH, HEIGHT))
 
 # --- Drawing ---
 def draw_grid():
-    """Render the visible portion of the infinite world."""
     top_left_x = player_pos[0] - VIEW_WIDTH // 2
     top_left_y = player_pos[1] - VIEW_HEIGHT // 2
 
-    # Step 1: Draw base tiles
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
@@ -343,7 +349,6 @@ def draw_grid():
             else:
                 pygame.draw.rect(game_surface, BLACK, rect)
 
-    # Step 2: Draw under textures
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
@@ -362,7 +367,6 @@ def draw_grid():
                         under_rect = pygame.Rect(x * TILE_SIZE, (y + 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                         game_surface.blit(pygame.transform.scale(under_wood_image, (TILE_SIZE, TILE_SIZE)), under_rect)
 
-    # Step 3: Draw overlay tiles and entities
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
@@ -382,7 +386,6 @@ def draw_grid():
                 text_rect = level_text.get_rect(center=(x * TILE_SIZE + TILE_SIZE // 2, y * TILE_SIZE - 10))
                 game_surface.blit(level_text, text_rect)
 
-    # Draw pirates, player, etc.
     for p in pirates:
         for s in p["ship"]:
             sx = s["x"] - top_left_x
@@ -394,7 +397,8 @@ def draw_grid():
 
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
-    game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
+    if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:  # Only draw if in view
+        game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
 
     draw_interaction_ui()
 
@@ -405,9 +409,9 @@ def draw_grid():
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
                 level = pirate["level"]
                 if pirate["health"] > 1:
-                    pirate_image = pirate_sprites[f"level_{level}"]  # Hatted sprite
+                    pirate_image = pirate_sprites[f"level_{level}"]
                 else:
-                    pirate_image = pirate_sprites["base"]  # Hatless at 1 health
+                    pirate_image = pirate_sprites["base"]
                 game_surface.blit(pygame.transform.scale(pirate_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
 
         if p["state"] == "landed":
@@ -418,18 +422,16 @@ def draw_grid():
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
-    
-    # Draw selected tile overlay
+
     if selected_tile:
         sel_x, sel_y = selected_tile
         sel_px = sel_x - top_left_x
         sel_py = sel_y - top_left_y
         if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
             overlay_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-            overlay_surface.fill((0, 0, 0, 128))  # Black with 50% transparency (128/255)
+            overlay_surface.fill((0, 0, 0, 128))
             game_surface.blit(overlay_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
-    # Draw floating wood gain texts
     for text in wood_texts:
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
@@ -440,15 +442,14 @@ def draw_grid():
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
             game_surface.blit(text_surface, text_rect)
 
-    # Draw floating XP gain texts
     for text in xp_texts:
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
             font = pygame.font.SysFont(None, 14)
-            text_surface = font.render(text["text"], True, YELLOW)  # Yellow to distinguish from wood
+            text_surface = font.render(text["text"], True, YELLOW)
             text_surface.set_alpha(text["alpha"])
-            text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))  # Slightly higher to avoid overlap
+            text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
             game_surface.blit(text_surface, text_rect)
 
     for hat in hat_particles:
@@ -1233,16 +1234,18 @@ def update_trees():
         del tree_growth[pos]
 
 def try_move(dx, dy):
-    global player_move_timer, facing
+    global player_move_timer, facing, player_chunk
     now = pygame.time.get_ticks()
     x, y = player_pos[0] + dx, player_pos[1] + dy
     facing = [dx, dy]
     if now - player_move_timer > player_move_delay:
         if get_tile(x, y) not in [WATER, TREE]:
+            old_chunk = player_chunk
             player_pos[0], player_pos[1] = x, y
-            update_player_chunk()
-            manage_chunks()
-        player_move_timer = now
+            player_chunk = world_to_chunk(x, y)
+            if old_chunk != player_chunk:
+                manage_chunks()
+            player_move_timer = now
 
 # --- Game Loop ---
 running = True
