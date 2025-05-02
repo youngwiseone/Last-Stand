@@ -6,6 +6,7 @@ import os
 import subprocess
 import pickle
 import shutil
+import math
 
 # --- Init ---
 pygame.init()
@@ -167,7 +168,7 @@ player_chunk = (0, 0)  # Player's current chunk
 
 def world_to_chunk(x, y):
     """Convert world coordinates to chunk coordinates."""
-    return x // CHUNK_SIZE, y // CHUNK_SIZE
+    return int(x) // CHUNK_SIZE, int(y) // CHUNK_SIZE
 
 def chunk_to_world(cx, cy, tx, ty):
     """Convert chunk coordinates and tile offsets to world coordinates."""
@@ -241,12 +242,18 @@ def generate_chunk(cx, cy):
 
     return chunk
 
+def save_chunk(cx, cy, chunk_data):
+    filename = f"{CHUNK_DIR}/chunk_{cx}_{cy}.pkl"
+    with open(filename, "wb") as f:
+        pickle.dump(chunk_data, f)
+
 def get_tile(x, y):
     key = (x, y)
     if key in tile_cache:
         return tile_cache[key]
     cx, cy = world_to_chunk(x, y)
-    tx, ty = x % CHUNK_SIZE, y % CHUNK_SIZE
+    tx = int(x % CHUNK_SIZE)  # Ensure integer
+    ty = int(y % CHUNK_SIZE)  # Ensure integer
     if tx < 0: tx += CHUNK_SIZE
     if ty < 0: ty += CHUNK_SIZE
     if (cx, cy) not in chunks:
@@ -261,7 +268,8 @@ def get_tile(x, y):
 
 def set_tile(x, y, tile_type):
     cx, cy = world_to_chunk(x, y)
-    tx, ty = x % CHUNK_SIZE, y % CHUNK_SIZE
+    tx = int(x % CHUNK_SIZE)  # Ensure integer
+    ty = int(y % CHUNK_SIZE)  # Ensure integer
     if tx < 0: tx += CHUNK_SIZE
     if ty < 0: ty += CHUNK_SIZE
     if (cx, cy) not in chunks:
@@ -272,6 +280,7 @@ def set_tile(x, y, tile_type):
             chunks[(cx, cy)] = generate_chunk(cx, cy)
     chunks[(cx, cy)][ty][tx] = tile_type
     tile_cache[(x, y)] = tile_type
+    save_chunk(cx, cy, chunks[(cx, cy)])  # Save the modified chunk
 
 # --- Initialize Starting Area ---
 def initialize_starting_area():
@@ -332,7 +341,7 @@ tiles_placed = 0
 
 game_over = False
 fade_done = False
-player_pos = [0, 0]  # Now in world coordinates
+player_pos = [0.0, 0.0]  # Now in world coordinates with floating-point precision
 wood = 5
 selected_block = LAND
 player_move_timer = 0
@@ -384,40 +393,55 @@ game_surface = pygame.Surface((WIDTH, HEIGHT))
 
 # --- Drawing ---
 def draw_grid():
-    top_left_x = player_pos[0] - VIEW_WIDTH // 2
-    top_left_y = player_pos[1] - VIEW_HEIGHT // 2
+    # Camera follows player's exact position
+    top_left_x = player_pos[0] - VIEW_WIDTH / 2.0
+    top_left_y = player_pos[1] - VIEW_HEIGHT / 2.0
+    # Floor for tile rendering
+    start_x, start_y = int(top_left_x), int(top_left_y)
+    
+    # First pass: Render base tiles
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
-            gx, gy = top_left_x + x, top_left_y + y
+            gx, gy = start_x + x, start_y + y
             tile = get_tile(gx, gy)
-            rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+            # Calculate pixel position with sub-pixel offset
+            px = (x - (top_left_x - start_x)) * TILE_SIZE
+            py = (y - (top_left_y - start_y)) * TILE_SIZE
+            rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
             image = tile_images.get(tile)
             if image:
                 game_surface.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
             else:
                 pygame.draw.rect(game_surface, BLACK, rect)
+    
+    # Second pass: Render underlay tiles (e.g., under water)
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
-            gx, gy = top_left_x + x, top_left_y + y
+            gx, gy = start_x + x, start_y + y
             tile = get_tile(gx, gy)
             below_y = gy + 1
             below_tile = get_tile(gx, below_y)
             if below_tile == WATER:
+                px = (x - (top_left_x - start_x)) * TILE_SIZE
+                py = (y + 1 - (top_left_y - start_y)) * TILE_SIZE
+                under_rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
                 if tile in [LAND, TURRET, USED_LAND, SAPLING, TREE, LOOT]:
                     under_land_image = tile_images.get("UNDER_LAND")
                     if under_land_image:
-                        under_rect = pygame.Rect(x * TILE_SIZE, (y + 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                         game_surface.blit(pygame.transform.scale(under_land_image, (TILE_SIZE, TILE_SIZE)), under_rect)
                 elif tile in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
                     under_wood_image = tile_images.get("UNDER_WOOD")
                     if under_wood_image:
-                        under_rect = pygame.Rect(x * TILE_SIZE, (y + 1) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
                         game_surface.blit(pygame.transform.scale(under_wood_image, (TILE_SIZE, TILE_SIZE)), under_rect)
+    
+    # Third pass: Render overlay tiles (e.g., TURRET, TREE, WALL) and turret levels
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
-            gx, gy = top_left_x + x, top_left_y + y
+            gx, gy = start_x + x, start_y + y
             tile = get_tile(gx, gy)
-            rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+            px = (x - (top_left_x - start_x)) * TILE_SIZE
+            py = (y - (top_left_y - start_y)) * TILE_SIZE
+            rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
             if tile in [TURRET, TREE, SAPLING, LOOT, WALL]:
                 land_image = tile_images.get(LAND)
                 if land_image:
@@ -433,21 +457,29 @@ def draw_grid():
                 level = turret_levels.get((gx, gy), 1)
                 font = pygame.font.SysFont(None, 20)
                 level_text = font.render(str(level), True, WHITE)
-                text_rect = level_text.get_rect(center=(x * TILE_SIZE + TILE_SIZE // 2, y * TILE_SIZE - 10))
+                text_rect = level_text.get_rect(center=(px + TILE_SIZE // 2, py - 10))
                 game_surface.blit(level_text, text_rect)
+    
+    # Render pirate ships
     for p in pirates:
         for s in p["ship"]:
             sx = s["x"] - top_left_x
             sy = s["y"] - top_left_y
             if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
-                boat_tile_image = tile_images.get(BOAT_TILE)  # Ships always use BOAT_TILE
+                boat_tile_image = tile_images.get(BOAT_TILE)
                 if boat_tile_image:
                     game_surface.blit(pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
+    
+    # Render player at exact position
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
     if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
         game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
+    
+    # Render interaction UI
     draw_interaction_ui()
+    
+    # Render pirate characters and "Land Ahoy!" text
     for p in pirates:
         for pirate in p.get("pirates", []):
             px = pirate["x"] - top_left_x
@@ -475,6 +507,8 @@ def draw_grid():
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
+    
+    # Render NPCs
     for npc in npcs:
         for s in npc["ship"]:
             sx = s["x"] - top_left_x
@@ -487,6 +521,8 @@ def draw_grid():
                 elif npc["state"] == "docked":
                     npc_image = npc["sprite"]
                     game_surface.blit(pygame.transform.scale(npc_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
+    
+    # Render selected tile overlay and wall placement preview
     if selected_tile:
         sel_x, sel_y = selected_tile
         sel_px = sel_x - top_left_x
@@ -505,6 +541,8 @@ def draw_grid():
             wall_surface = pygame.transform.scale(wall_image, (TILE_SIZE, TILE_SIZE))
             wall_surface.set_alpha(128)  # 50% transparency
             game_surface.blit(wall_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
+    
+    # Render floating text (wood and XP)
     for text in wood_texts:
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
@@ -523,6 +561,8 @@ def draw_grid():
             text_surface.set_alpha(text["alpha"])
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
             game_surface.blit(text_surface, text_rect)
+    
+    # Render hat particles
     for hat in hat_particles:
         px = hat["x"] - top_left_x
         py = hat["y"] - top_left_y
@@ -538,6 +578,8 @@ def draw_grid():
             hat_surface.set_alpha(alpha)
             hat_rect = hat_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE + TILE_SIZE // 2))
             game_surface.blit(hat_surface, hat_rect.topleft)
+    
+    # Render explosions
     for explosion in explosions[:]:
         explosion["timer"] -= clock.get_time()
         if explosion["timer"] <= 0:
@@ -550,6 +592,8 @@ def draw_grid():
             explosion_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
             pygame.draw.circle(explosion_surface, (255, 0, 0, alpha), (TILE_SIZE // 2, TILE_SIZE // 2), TILE_SIZE // 2)
             game_surface.blit(explosion_surface, (px * TILE_SIZE, py * TILE_SIZE))
+    
+    # Render sparks
     if sparks:
         spark_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         for spark in sparks:
@@ -562,6 +606,8 @@ def draw_grid():
                 pygame.draw.circle(spark_surface, (*spark["color"], alpha),
                                    (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 2)
         game_surface.blit(spark_surface, (0, 0))
+    
+    # Render projectiles
     for proj in projectiles:
         px = proj["x"] - top_left_x
         py = proj["y"] - top_left_y
@@ -610,7 +656,7 @@ def draw_minimap():
                             BOAT_TILE_STAGE_3: (115, 220, 140)   # Closer to GREEN
                         }.get(tile, BLACK)
                         world_x, world_y = chunk_to_world(cx + dx, cy + dy, mx, my)
-                        if (world_x, world_y) == tuple(player_pos):
+                        if (world_x, world_y) == (int(player_pos[0]), int(player_pos[1])):
                             color = WHITE
                         mx_map = (dx + VIEW_CHUNKS // 2) * CHUNK_SIZE + mx
                         my_map = (dy + VIEW_CHUNKS // 2) * CHUNK_SIZE + my
@@ -688,11 +734,6 @@ def show_game_over():
         pygame.display.flip()
         pygame.time.delay(20)
 
-def save_chunk(cx, cy, chunk_data):
-    filename = f"{CHUNK_DIR}/chunk_{cx}_{cy}.pkl"
-    with open(filename, "wb") as f:
-        pickle.dump(chunk_data, f)
-
 # --- Game Logic ---
 def screen_to_world(mouse_x, mouse_y):
     """Convert screen coordinates to world coordinates."""
@@ -705,22 +746,47 @@ def screen_to_world(mouse_x, mouse_y):
     world_y = (mouse_y - blit_y) / SCALE
 
     # Convert to tile coordinates relative to the view
-    top_left_x = player_pos[0] - VIEW_WIDTH // 2
-    top_left_y = player_pos[1] - VIEW_HEIGHT // 2
+    top_left_x = player_pos[0] - VIEW_WIDTH / 2.0
+    top_left_y = player_pos[1] - VIEW_HEIGHT / 2.0
 
-    tile_x = int(world_x // TILE_SIZE)
-    tile_y = int(world_y // TILE_SIZE)
+    tile_x = world_x / TILE_SIZE
+    tile_y = world_y / TILE_SIZE
 
-    # Convert to world coordinates
-    world_tile_x = tile_x + top_left_x
-    world_tile_y = tile_y + top_left_y
+    # Use math.floor for consistent tile coordinate calculation
+    world_tile_x = math.floor(top_left_x + tile_x)
+    world_tile_y = math.floor(top_left_y + tile_y)
 
     return world_tile_x, world_tile_y
 
+def is_on_land(pos):
+    """Check if all four corners of the player's hitbox are on land tiles."""
+    # Define hitbox half-size (5 pixels margin ≈ 0.15625 tiles)
+    hitbox_half_size = 0.15625
+    
+    # Calculate player's center from top-left position
+    center_x = pos[0] + 0.5
+    center_y = pos[1] + 0.5
+    
+    # Define hitbox corners relative to the center
+    corners = [
+        (center_x - hitbox_half_size, center_y - hitbox_half_size),  # Top-left
+        (center_x + hitbox_half_size, center_y - hitbox_half_size),  # Top-right
+        (center_x - hitbox_half_size, center_y + hitbox_half_size),  # Bottom-left
+        (center_x + hitbox_half_size, center_y + hitbox_half_size)   # Bottom-right
+    ]
+    
+    # Check each corner against the tile map
+    for cx, cy in corners:
+        tile_x = math.floor(cx)
+        tile_y = math.floor(cy)
+        if get_tile(tile_x, tile_y) in [WATER, TREE, WALL]:
+            return False
+    return True
+
 def update_land_spread():
     now = pygame.time.get_ticks()
-    top_left_x = player_pos[0] - VIEW_WIDTH // 2
-    top_left_y = player_pos[1] - VIEW_HEIGHT // 2
+    top_left_x = int(player_pos[0] - VIEW_WIDTH // 2)  # Floor to integer
+    top_left_y = int(player_pos[1] - VIEW_HEIGHT // 2)  # Floor to integer
 
     # Step 1: Find BOAT_TILE tiles adjacent to LAND and add to land_spread
     for y in range(VIEW_HEIGHT):
@@ -990,7 +1056,7 @@ def update_pirates():
                         return
                 if pirate["move_progress"] >= 1.0:
                     # Turret Breaker: Target nearest turret
-                    target_x, target_y = pirate["x"], pirate["y"]
+                    target_x, target_y = int(pirate["x"]), int(pirate["y"])
                     if is_rare and rare_type == "turret_breaker":
                         nearest_turret = None
                         min_dist = float("inf")
@@ -1006,9 +1072,9 @@ def update_pirates():
                         if nearest_turret:
                             target_x, target_y = nearest_turret
                         else:
-                            target_x, target_y = player_pos[0], player_pos[1]
+                            target_x, target_y = int(player_pos[0]), int(player_pos[1])
                     else:
-                        target_x, target_y = player_pos[0], player_pos[1]
+                        target_x, target_y = int(player_pos[0]), int(player_pos[1])
                     dx = target_x - pirate["x"]
                     dy = target_y - pirate["y"]
                     primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
@@ -1159,8 +1225,8 @@ def update_npcs():
 
 def update_turrets():
     now = pygame.time.get_ticks()
-    top_left_x = player_pos[0] - VIEW_WIDTH // 2
-    top_left_y = player_pos[1] - VIEW_HEIGHT // 2
+    top_left_x = int(player_pos[0] - VIEW_WIDTH // 2)  # Floor to integer
+    top_left_y = int(player_pos[1] - VIEW_HEIGHT // 2)  # Floor to integer
     for y in range(VIEW_HEIGHT + 2):
         for x in range(VIEW_WIDTH + 2):
             gx, gy = top_left_x + x, top_left_y + y
@@ -1515,11 +1581,6 @@ def update_interaction_ui():
         interaction_ui["left_message"] = "Chop\n+2-4 Wood"
     elif tile == SAPLING:
         interaction_ui["left_message"] = "Uproot\n+1 Wood"
-    elif tile == BOAT_TILE:
-        if player_pos[0] == x and player_pos[1] == y:
-            interaction_ui["left_message"] = "Cannot remove\nwhile standing on tile"
-        else:
-            interaction_ui["left_message"] = "Remove Boat Tile\n+1 Wood"
     elif tile == TURRET:
         turret_pos = (x, y)
         level = turret_levels.get(turret_pos, 1)
@@ -1559,19 +1620,37 @@ def update_trees():
         set_tile(pos[0], pos[1], TREE)
         del tree_growth[pos]
 
-def try_move(dx, dy):
-    global player_move_timer, facing, player_chunk
-    now = pygame.time.get_ticks()
-    x, y = player_pos[0] + dx, player_pos[1] + dy
-    facing = [dx, dy]
-    if now - player_move_timer > player_move_delay:
-        if get_tile(x, y) not in [WATER, TREE, WALL]:
-            old_chunk = player_chunk
-            player_pos[0], player_pos[1] = x, y
-            player_chunk = world_to_chunk(x, y)
-            if old_chunk != player_chunk:
-                manage_chunks()
-            player_move_timer = now
+def update_player_movement():
+    global player_pos, facing, player_chunk
+    keys = pygame.key.get_pressed()
+    speed = 0.2  # Movement speed (pixels per frame, adjust as needed)
+    dx, dy = 0.0, 0.0
+
+    if keys[pygame.K_w]:
+        dy -= speed
+    if keys[pygame.K_s]:
+        dy += speed
+    if keys[pygame.K_a]:
+        dx -= speed
+    if keys[pygame.K_d]:
+        dx += speed
+
+    # Normalize diagonal movement
+    if dx != 0 or dy != 0:
+        length = math.hypot(dx, dy)
+        if length > 0:
+            dx, dy = dx / length * speed, dy / length * speed
+        facing = [dx, dy] if dx != 0 or dy != 0 else facing
+
+    # Check if the new position keeps the hitbox on land
+    new_x, new_y = player_pos[0] + dx, player_pos[1] + dy
+    if is_on_land((new_x, new_y)):
+        old_chunk = player_chunk
+        player_pos[0], player_pos[1] = new_x, new_y
+        update_player_chunk()  # Update player_chunk
+        new_chunk = player_chunk  # Use updated player_chunk
+        if old_chunk != new_chunk:
+            manage_chunks()
 
 # --- Game Loop ---
 running = True
@@ -1670,11 +1749,7 @@ while running:
             elif event.y < 0 and SCALE > MIN_SCALE:
                 SCALE -= 1
 
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_w]: try_move(0, -1)
-    elif keys[pygame.K_s]: try_move(0, 1)
-    elif keys[pygame.K_a]: try_move(-1, 0)
-    elif keys[pygame.K_d]: try_move(1, 0)
+    update_player_movement()
 
     clock.tick(60)
 
