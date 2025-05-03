@@ -412,6 +412,8 @@ def draw_grid():
     top_left_y = player_pos[1] - VIEW_HEIGHT / 2.0
     start_x, start_y = int(top_left_x), int(top_left_y)
 
+    darkness_factor = get_darkness_factor(game_time)
+
     # Compute brightness map
     brightness = [[0.0 for _ in range(VIEW_WIDTH)] for _ in range(VIEW_HEIGHT)]
     light_source_tiles = set()
@@ -528,10 +530,34 @@ def draw_grid():
         for s in p["ship"]:
             sx = s["x"] - top_left_x
             sy = s["y"] - top_left_y
+            # Skip tiles within 2 tiles of edge during full night
+            if darkness_factor == 1.0 and (
+                sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
+            ):
+                continue
             if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
                 boat_tile_image = tile_images.get(BOAT_TILE)
                 if boat_tile_image:
-                    game_surface.blit(pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
+                    scaled_image = pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE))
+                    if darkness_factor == 1.0:
+                        # Calculate distance to closest edge
+                        dist_to_edge = min(
+                            sx,             # Distance to left edge
+                            VIEW_WIDTH - sx, # Distance to right edge
+                            sy,             # Distance to top edge
+                            VIEW_HEIGHT - sy # Distance to bottom edge
+                        )
+                        # Interpolate alpha: 0 at dist=2, 255 at dist=5
+                        if dist_to_edge <= 2:
+                            alpha = 0
+                        elif dist_to_edge >= 5:
+                            alpha = 255
+                        else:
+                            alpha = int(255 * (dist_to_edge - 2) / (5 - 2))
+                        scaled_image.set_alpha(alpha)
+                    else:
+                        scaled_image.set_alpha(255)  # Full opacity for day/fade
+                    game_surface.blit(scaled_image, (sx * TILE_SIZE, sy * TILE_SIZE))
 
     # Render player at exact position
     px = player_pos[0] - top_left_x
@@ -565,6 +591,11 @@ def draw_grid():
         if p["state"] == "landed":
             px = p["x"] - top_left_x
             py = p["y"] - top_left_y
+            # Skip edge tiles during full night
+            if darkness_factor == 1.0 and (
+                sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
+            ):
+                continue
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
                 font = pygame.font.SysFont(None, 24)
                 text = font.render("Land Ahoy!", True, WHITE)
@@ -576,6 +607,10 @@ def draw_grid():
         for s in npc["ship"]:
             sx = s["x"] - top_left_x
             sy = s["y"] - top_left_y
+            if darkness_factor == 1.0 and (
+                sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
+            ):
+                continue
             if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
                 if npc["state"] == "boat":
                     boat_tile_image = tile_images.get(BOAT_TILE)
@@ -693,7 +728,6 @@ def draw_grid():
             py = (gy - top_left_y) * TILE_SIZE
             # Get brightness and compute alpha
             b = brightness[y][x]
-            darkness_factor = get_darkness_factor(game_time)
             final_brightness = b * darkness_factor + (1 - darkness_factor)
             alpha = int(255 * (1 - final_brightness))
             # Define rectangle at the computed position
