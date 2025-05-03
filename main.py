@@ -57,6 +57,7 @@ def adjust_sprite_for_rare(sprite, rare_type):
 clear_chunk_files()
 
 SCALE = 2
+BASE_SCALE = 2
 MIN_SCALE = 1
 MAX_SCALE = 4
 
@@ -165,6 +166,12 @@ VIEW_CHUNKS = 5  # Load a 5x5 chunk grid around the player
 chunks = {}  # Dictionary: {(cx, cy): [[tile]]}
 tile_cache = {}  # Dictionary: {(x, y): tile_type}
 player_chunk = (0, 0)  # Player's current chunk
+
+def get_speed_multiplier():
+    """Calculate speed multiplier based on current SCALE relative to BASE_SCALE."""
+    base_multiplier = SCALE / BASE_SCALE
+    # Apply a minimum multiplier for SCALE = 1 to avoid being too slow
+    return max(0.75, base_multiplier) if SCALE == 1 else base_multiplier
 
 def world_to_chunk(x, y):
     """Convert world coordinates to chunk coordinates."""
@@ -975,19 +982,22 @@ def update_pirates():
             if not p["ship"]:
                 pirates.remove(p)
                 continue
+            # Scale the base speed (0.05) by the speed multiplier
+            base_speed = 0.05
+            scaled_speed = base_speed * get_speed_multiplier()
             for s in p["ship"]:
-                s["x"] += p["dir"][0] * 0.05
-                s["y"] += p["dir"][1] * 0.05
+                s["x"] += p["dir"][0] * scaled_speed
+                s["y"] += p["dir"][1] * scaled_speed
             for pirate in p["pirates"]:
-                pirate["x"] += p["dir"][0] * 0.05
-                pirate["y"] += p["dir"][1] * 0.05
+                pirate["x"] += p["dir"][0] * scaled_speed
+                pirate["y"] += p["dir"][1] * scaled_speed
                 pirate["start_x"] = pirate["x"]
                 pirate["start_y"] = pirate["y"]
                 pirate["target_x"] = pirate["x"]
                 pirate["target_y"] = pirate["y"]
                 pirate["move_progress"] = 1.0
-            nx = p["x"] + p["dir"][0] * 0.05
-            ny = p["y"] + p["dir"][1] * 0.05
+            nx = p["x"] + p["dir"][0] * scaled_speed
+            ny = p["y"] + p["dir"][1] * scaled_speed
             landed = False
             landing_tile = None
             for s in p["ship"]:
@@ -1266,9 +1276,11 @@ def update_sparks():
 
 def update_projectiles():
     global pirates_killed, wood
+    base_projectile_speed = 0.2  # Base projectile speed at SCALE = 2
+    scaled_projectile_speed = base_projectile_speed * get_speed_multiplier()  # Adjust speed based on scale
     for proj in projectiles[:]:
-        next_x = proj["x"] + proj["dir"][0] * projectile_speed
-        next_y = proj["y"] + proj["dir"][1] * projectile_speed
+        next_x = proj["x"] + proj["dir"][0] * scaled_projectile_speed
+        next_y = proj["y"] + proj["dir"][1] * scaled_projectile_speed
         tile_x, tile_y = int(next_x), int(next_y)
 
         for _ in range(random.randint(1, 3)):
@@ -1623,7 +1635,8 @@ def update_trees():
 def update_player_movement():
     global player_pos, facing, player_chunk
     keys = pygame.key.get_pressed()
-    speed = 0.2  # Movement speed (pixels per frame, adjust as needed)
+    base_speed = 0.2  # Base movement speed (pixels per frame at SCALE = 2)
+    speed = base_speed * get_speed_multiplier()  # Adjust speed based on scale
     dx, dy = 0.0, 0.0
 
     if keys[pygame.K_w]:
