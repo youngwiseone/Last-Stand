@@ -1104,13 +1104,23 @@ def update_pirates():
                         if has_adjacent_boat_or_land(tx, ty):
                             set_tile(tx, ty, BOAT_TILE)
                     if is_rare and rare_type == "turret_breaker" and get_tile(tx, ty) == TURRET:
-                        set_tile(tx, ty, LAND)
-                        if (tx, ty) in turret_cooldowns:
-                            del turret_cooldowns[(tx, ty)]
-                        if (tx, ty) in turret_levels:
-                            del turret_levels[(tx, ty)]
-                        if (tx, ty) in turret_xp:
-                            del turret_xp[(tx, ty)]
+                        turret_pos = (tx, ty)
+                        current_level = turret_levels.get(turret_pos, 1)
+                        pirate_level = pirate["level"]
+                        if current_level > 1:
+                            new_level = max(1, current_level - pirate_level)
+                            turret_levels[turret_pos] = new_level
+                            if new_level == 1:
+                                turret_xp[turret_pos] = 0  # Reset XP when reduced to level 1
+                        else:
+                            # Turret is level 1 or would drop below 1, remove it
+                            set_tile(tx, ty, LAND)
+                            if turret_pos in turret_cooldowns:
+                                del turret_cooldowns[turret_pos]
+                            if turret_pos in turret_levels:
+                                del turret_levels[turret_pos]
+                            if turret_pos in turret_xp:
+                                del turret_xp[turret_pos]
                         moved = True
                     elif can_walk(tx, ty):
                         pirate["start_x"] = pirate["x"]
@@ -1125,13 +1135,23 @@ def update_pirates():
                             if has_adjacent_boat_or_land(ax, ay):
                                 set_tile(ax, ay, BOAT_TILE)
                         if is_rare and rare_type == "turret_breaker" and get_tile(ax, ay) == TURRET:
-                            set_tile(ax, ay, LAND)
-                            if (ax, ay) in turret_cooldowns:
-                                del turret_cooldowns[(ax, ay)]
-                            if (ax, ay) in turret_levels:
-                                del turret_levels[(ax, ay)]
-                            if (ax, ay) in turret_xp:
-                                del turret_xp[(ax, ay)]
+                            turret_pos = (ax, ay)
+                            current_level = turret_levels.get(turret_pos, 1)
+                            pirate_level = pirate["level"]
+                            if current_level > 1:
+                                new_level = max(1, current_level - pirate_level)
+                                turret_levels[turret_pos] = new_level
+                                if new_level == 1:
+                                    turret_xp[turret_pos] = 0  # Reset XP when reduced to level 1
+                            else:
+                                # Turret is level 1 or would drop below 1, remove it
+                                set_tile(ax, ay, LAND)
+                                if turret_pos in turret_cooldowns:
+                                    del turret_cooldowns[turret_pos]
+                                if turret_pos in turret_levels:
+                                    del turret_levels[turret_pos]
+                                if turret_pos in turret_xp:
+                                    del turret_xp[turret_pos]
                             moved = True
                         elif can_walk(ax, ay):
                             pirate["start_x"] = pirate["x"]
