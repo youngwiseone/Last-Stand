@@ -341,6 +341,7 @@ def manage_chunks():
 
 # --- Game State ---
 selected_tile = None  # Will store the (x, y) of the tile under the mouse
+game_time = 0.0  # Add this line after other global variables like wood, player_pos, etc.
 
 turrets_placed = 0
 pirates_killed = 0
@@ -400,18 +401,67 @@ game_surface = pygame.Surface((WIDTH, HEIGHT))
 
 # --- Drawing ---
 def draw_grid():
-    # Camera follows player's exact position
+    global game_surface
     top_left_x = player_pos[0] - VIEW_WIDTH / 2.0
     top_left_y = player_pos[1] - VIEW_HEIGHT / 2.0
-    # Floor for tile rendering
     start_x, start_y = int(top_left_x), int(top_left_y)
-    
-    # First pass: Render base tiles
+
+    # Compute brightness map
+    brightness = [[0.0 for _ in range(VIEW_WIDTH)] for _ in range(VIEW_HEIGHT)]
+    light_source_tiles = set()
+
+    # Collect light sources
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            gx, gy = start_x + x, start_y + y
+            if get_tile(gx, gy) in [TURRET, WALL]:
+                light_source_tiles.add((gx, gy))
+
+    # Get player's current tile position
+    player_tile = (int(player_pos[0] + 0.5), int(player_pos[1] + 0.5))
+    light_source_tiles.add(player_tile)
+
+    # Apply player light with a larger radius (3 tiles)
+    for dx in range(-3, 4):
+        for dy in range(-3, 4):
+            dist = abs(dx) + abs(dy)
+            if dist <= 3:
+                nx, ny = player_tile[0] + dx, player_tile[1] + dy
+                local_nx = nx - start_x
+                local_ny = ny - start_y
+                if 0 <= local_nx < VIEW_WIDTH and 0 <= local_ny < VIEW_HEIGHT:
+                    b = 0.9 if dist == 0 else 0.6 if dist == 1 else 0.4 if dist == 2 else 0.2
+                    brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], b)
+
+    for npc in npcs:
+        for s in npc["ship"]:
+            npc_tile = (int(s["x"] + 0.5), int(s["y"] + 0.5))
+            light_source_tiles.add(npc_tile)
+
+    # Apply brightness based on distance
+    for sx, sy in light_source_tiles:
+        local_x = sx - start_x
+        local_y = sy - start_y
+        if 0 <= local_x < VIEW_WIDTH and 0 <= local_y < VIEW_HEIGHT:
+            brightness[local_y][local_x] = max(brightness[local_y][local_x], 0.9)
+        for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
+            nx, ny = sx + dx, sy + dy
+            local_nx = nx - start_x
+            local_ny = ny - start_y
+            if 0 <= local_nx < VIEW_WIDTH and 0 <= local_ny < VIEW_HEIGHT:
+                brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], 0.5)
+        for dx, dy in [(-2,0), (2,0), (0,-2), (0,2)]:
+            nx, ny = sx + dx, sy + dy
+            local_nx = nx - start_x
+            local_ny = ny - start_y
+            if 0 <= local_nx < VIEW_WIDTH and 0 <= local_ny < VIEW_HEIGHT:
+                brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], 0.33)
+
+    # First pass: Render base tiles without darkness
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
             tile = get_tile(gx, gy)
-            # Calculate pixel position with sub-pixel offset
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
@@ -420,18 +470,18 @@ def draw_grid():
                 game_surface.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
             else:
                 pygame.draw.rect(game_surface, BLACK, rect)
-    
-    # Second pass: Render underlay tiles (e.g., under water)
+
+    # Second pass: Render underlay tiles without darkness
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
-            tile = get_tile(gx, gy)
             below_y = gy + 1
             below_tile = get_tile(gx, below_y)
             if below_tile == WATER:
                 px = (x - (top_left_x - start_x)) * TILE_SIZE
                 py = (y + 1 - (top_left_y - start_y)) * TILE_SIZE
                 under_rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
+                tile = get_tile(gx, gy)
                 if tile in [LAND, TURRET, USED_LAND, SAPLING, TREE, LOOT]:
                     under_land_image = tile_images.get("UNDER_LAND")
                     if under_land_image:
@@ -440,8 +490,8 @@ def draw_grid():
                     under_wood_image = tile_images.get("UNDER_WOOD")
                     if under_wood_image:
                         game_surface.blit(pygame.transform.scale(under_wood_image, (TILE_SIZE, TILE_SIZE)), under_rect)
-    
-    # Third pass: Render overlay tiles (e.g., TURRET, TREE, WALL) and turret levels
+
+    # Third pass: Render overlay tiles and turret levels
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
@@ -466,7 +516,7 @@ def draw_grid():
                 level_text = font.render(str(level), True, WHITE)
                 text_rect = level_text.get_rect(center=(px + TILE_SIZE // 2, py - 10))
                 game_surface.blit(level_text, text_rect)
-    
+
     # Render pirate ships
     for p in pirates:
         for s in p["ship"]:
@@ -476,16 +526,16 @@ def draw_grid():
                 boat_tile_image = tile_images.get(BOAT_TILE)
                 if boat_tile_image:
                     game_surface.blit(pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
-    
+
     # Render player at exact position
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
     if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
         game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
-    
+
     # Render interaction UI
     draw_interaction_ui()
-    
+
     # Render pirate characters and "Land Ahoy!" text
     for p in pirates:
         for pirate in p.get("pirates", []):
@@ -514,7 +564,7 @@ def draw_grid():
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
-    
+
     # Render NPCs
     for npc in npcs:
         for s in npc["ship"]:
@@ -528,7 +578,7 @@ def draw_grid():
                 elif npc["state"] == "docked":
                     npc_image = npc["sprite"]
                     game_surface.blit(pygame.transform.scale(npc_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
-    
+
     # Render selected tile overlay and wall placement preview
     if selected_tile:
         sel_x, sel_y = selected_tile
@@ -546,9 +596,9 @@ def draw_grid():
             below_tile = get_tile(sel_x, sel_y + 1)
             wall_image = tile_images["WALL_TOP"] if below_tile == WALL else tile_images[WALL]
             wall_surface = pygame.transform.scale(wall_image, (TILE_SIZE, TILE_SIZE))
-            wall_surface.set_alpha(128)  # 50% transparency
+            wall_surface.set_alpha(128)
             game_surface.blit(wall_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
-    
+
     # Render floating text (wood and XP)
     for text in wood_texts:
         px = text["x"] - top_left_x
@@ -568,7 +618,7 @@ def draw_grid():
             text_surface.set_alpha(text["alpha"])
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
             game_surface.blit(text_surface, text_rect)
-    
+
     # Render hat particles
     for hat in hat_particles:
         px = hat["x"] - top_left_x
@@ -585,7 +635,7 @@ def draw_grid():
             hat_surface.set_alpha(alpha)
             hat_rect = hat_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE + TILE_SIZE // 2))
             game_surface.blit(hat_surface, hat_rect.topleft)
-    
+
     # Render explosions
     for explosion in explosions[:]:
         explosion["timer"] -= clock.get_time()
@@ -599,7 +649,7 @@ def draw_grid():
             explosion_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
             pygame.draw.circle(explosion_surface, (255, 0, 0, alpha), (TILE_SIZE // 2, TILE_SIZE // 2), TILE_SIZE // 2)
             game_surface.blit(explosion_surface, (px * TILE_SIZE, py * TILE_SIZE))
-    
+
     # Render sparks
     if sparks:
         spark_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -613,13 +663,33 @@ def draw_grid():
                 pygame.draw.circle(spark_surface, (*spark["color"], alpha),
                                    (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 2)
         game_surface.blit(spark_surface, (0, 0))
-    
+
     # Render projectiles
     for proj in projectiles:
         px = proj["x"] - top_left_x
         py = proj["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
             pygame.draw.circle(game_surface, DARK_GRAY, (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 4)
+
+    # Apply darkness overlay using world-coordinate-based positioning
+    darkness_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            # Compute world tile coordinates
+            gx = start_x + x
+            gy = start_y + y
+            # Compute screen position relative to top_left
+            px = (gx - top_left_x) * TILE_SIZE
+            py = (gy - top_left_y) * TILE_SIZE
+            # Get brightness and compute alpha
+            b = brightness[y][x]
+            darkness_factor = get_darkness_factor(game_time)
+            final_brightness = b * darkness_factor + (1 - darkness_factor)
+            alpha = int(255 * (1 - final_brightness))
+            # Define rectangle at the computed position
+            rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
+            darkness_surface.fill((0, 0, 0, alpha), rect)
+    game_surface.blit(darkness_surface, (0, 0))
 
 def draw_ui():
     font = pygame.font.SysFont(None, 28)
@@ -629,11 +699,14 @@ def draw_ui():
     quit_text = font.render("Press ESC to quit", True, WHITE)
     help_color = WHITE if not interaction_ui_enabled else (150, 150, 150)
     help_text = font.render("Press I for Help", True, help_color)
+    time_str = get_time_string(game_time)  # Add clock
+    time_text = font.render(time_str, True, WHITE)
 
     screen.blit(wood_text, (10, 10))
     screen.blit(score_text, (10, 40))
     screen.blit(quit_text, (10, 70))
     screen.blit(help_text, (10, 100))
+    screen.blit(time_text, (10, 130))
 
 def draw_minimap():
     """Simplified minimap showing nearby chunks."""
@@ -1685,6 +1758,44 @@ def update_player_movement():
         if old_chunk != new_chunk:
             manage_chunks()
 
+def get_darkness_factor(game_time):
+    """Calculate the darkness factor based on game time, with fade-in/out."""
+    cycle = 48.0  # Total cycle length: 24s day + 24s night
+    t = game_time % cycle
+    # Day: 7am (14s) to 7pm (38s)
+    if 14 <= t < 38:
+        return 0.0  # Full day
+    # Fade-in: 7pm (38s) to 8pm (40s)
+    elif 38 <= t < 40:
+        progress = (t - 38) / 2  # 2-second fade
+        return progress
+    # Full night: 8pm (40s) to 6am (12s next cycle)
+    elif (40 <= t < 48) or (0 <= t < 12):
+        return 1.0  # Full night
+    # Fade-out: 6am (12s) to 7am (14s)
+    elif 12 <= t < 14:
+        progress = (t - 12) / 2  # 2-second fade
+        return 1.0 - progress
+    return 0.0
+
+def is_night(game_time):
+    """Determine if it’s night (7pm to 7am)."""
+    t = game_time % 48
+    return t >= 38 or t < 14  # Night from 38s (7pm) to 14s (7am)
+
+def get_time_string(game_time):
+    """Convert game time to a 12-hour clock string (e.g., '1:00am')."""
+    cycle = 48.0
+    total_minutes = (game_time % cycle) * 30  # Each second = 30 minutes
+    hour = int(total_minutes // 60) % 24
+    minute = total_minutes % 60
+    display_hour = hour % 12
+    if display_hour == 0:
+        display_hour = 12
+    period = "am" if hour < 12 else "pm"
+    minute_str = "00" if minute < 15 else "30"  # Only :00 or :30
+    return f"{display_hour}:{minute_str}{period}"
+
 # --- Game Loop ---
 running = True
 while running:
@@ -1709,6 +1820,7 @@ while running:
                     sys.exit()
         continue
 
+    game_time += clock.get_time() / 1000.0  # Convert milliseconds to seconds
     game_surface.fill(BLACK)
     update_sparks()
     update_wood_texts()
@@ -1753,7 +1865,7 @@ while running:
         waller_npc_spawned = True
 
     pirate_spawn_timer += clock.get_time()
-    if pirate_spawn_timer >= spawn_delay:
+    if pirate_spawn_timer >= spawn_delay and is_night(game_time):
         spawn_pirate()
         pirate_spawn_timer = 0
 
