@@ -1328,8 +1328,8 @@ def update_npcs():
 
 def update_turrets():
     now = pygame.time.get_ticks()
-    top_left_x = int(player_pos[0] - VIEW_WIDTH // 2)  # Floor to integer
-    top_left_y = int(player_pos[1] - VIEW_HEIGHT // 2)  # Floor to integer
+    top_left_x = int(player_pos[0] - VIEW_WIDTH // 2)
+    top_left_y = int(player_pos[1] - VIEW_HEIGHT // 2)
     for y in range(VIEW_HEIGHT + 2):
         for x in range(VIEW_WIDTH + 2):
             gx, gy = top_left_x + x, top_left_y + y
@@ -1349,8 +1349,11 @@ def update_turrets():
                             projectiles.append({
                                 "x": gx,
                                 "y": gy,
+                                "start_x": gx,  # Store starting position
+                                "start_y": gy,
                                 "dir": (dx/length, dy/length),
-                                "turret_id": turret_pos
+                                "turret_id": turret_pos,
+                                "damage": level  # Damage equals turret level
                             })
                             turret_cooldowns[turret_pos] = now
                             break
@@ -1371,12 +1374,19 @@ def update_projectiles():
     global pirates_killed, wood
     base_projectile_speed = 0.2
     scaled_projectile_speed = base_projectile_speed * get_speed_multiplier()
-    pirates_to_remove = set()  # Track pirate groups to remove
+    pirates_to_remove = set()
+    max_distance = TURRET_RANGE  # Despawn after traveling 4 tiles (adjustable)
 
     for proj in projectiles[:]:
         next_x = proj["x"] + proj["dir"][0] * scaled_projectile_speed
         next_y = proj["y"] + proj["dir"][1] * scaled_projectile_speed
         tile_x, tile_y = int(next_x), int(next_y)
+
+        # Check distance traveled
+        distance_traveled = math.hypot(next_x - proj["start_x"], next_y - proj["start_y"])
+        if distance_traveled > max_distance:
+            projectiles.remove(proj)
+            continue
 
         for _ in range(random.randint(1, 3)):
             spark_color = random.choice([(255, 255, 0), (255, 165, 0), (255, 0, 0)])
@@ -1404,7 +1414,7 @@ def update_projectiles():
         for p in pirates[:]:
             for pirate in p["pirates"][:]:
                 if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
-                    pirate["health"] -= 1
+                    pirate["health"] -= proj["damage"]  # Apply damage based on turret level
                     if pirate["health"] == 1:
                         hat_particles.append({
                             "x": pirate["x"],
@@ -1453,14 +1463,12 @@ def update_projectiles():
                 if hit:
                     break
 
-            # Mark pirate group for removal if empty
             if not p["pirates"] and not p["ship"]:
-                pirates_to_remove.add(id(p))  # Use object ID to uniquely identify p
+                pirates_to_remove.add(id(p))
 
         if hit and proj in projectiles:
             projectiles.remove(proj)
 
-    # Remove empty pirate groups after processing all projectiles
     pirates[:] = [p for p in pirates if id(p) not in pirates_to_remove]
 
 def draw_interaction_ui():
