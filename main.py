@@ -103,6 +103,12 @@ RARE_TYPE_COLORS = {
 # --- Tile Types ---
 WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3 = range(11)
 
+# Approved tiles for movement
+MOVEMENT_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TURRET)
+
+# Approved tiles for boat tile adjacency
+LAND_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TREE, TURRET)
+
 # --- Load Tile Images ---
 tile_images = {
     WATER: pygame.image.load("Assets/water.png").convert(),
@@ -859,7 +865,7 @@ def is_on_land(pos):
     for cx, cy in corners:
         tile_x = math.floor(cx)
         tile_y = math.floor(cy)
-        if get_tile(tile_x, tile_y) in [WATER, TREE, WALL]:
+        if get_tile(tile_x, tile_y) not in MOVEMENT_TILES:
             return False
     return True
 
@@ -1165,7 +1171,7 @@ def update_pirates():
                     alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
                     def can_walk(x, y):
                         tile = get_tile(x, y)
-                        if tile in [TREE, WATER, WALL]:
+                        if tile not in MOVEMENT_TILES:
                             return False
                         for other_p in pirates:
                             for other_pirate in other_p["pirates"]:
@@ -1318,7 +1324,7 @@ def update_npcs():
                 random.shuffle(neighbors)
                 for dx, dy in neighbors:
                     tx, ty = int(npc["x"] + dx), int(npc["y"] + dy)
-                    if get_tile(tx, ty) in [LAND, USED_LAND, SAPLING, TURRET, LOOT]:  # Valid tiles to roam
+                    if get_tile(tx, ty) in MOVEMENT_TILES:
                         npc["start_x"] = npc["x"]
                         npc["start_y"] = npc["y"]
                         npc["target_x"] = tx
@@ -1574,7 +1580,7 @@ def has_adjacent_boat_or_land(x, y):
     neighbors = [(x, y-1), (x, y+1), (x-1, y), (x+1, y)]  # Up, down, left, right
     for nx, ny in neighbors:
         tile = get_tile(nx, ny)
-        if tile in [BOAT_TILE, LAND]:
+        if tile in LAND_TILES:
             return True
     return False
 
