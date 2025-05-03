@@ -978,7 +978,8 @@ def spawn_pirate():
             "xp_value": xp_value,
             "level": level,
             "is_rare": is_rare,
-            "rare_type": rare_type
+            "rare_type": rare_type,
+            "has_dropped_hat": False
         })
 
     dx = player_pos[0] - x
@@ -1375,14 +1376,13 @@ def update_projectiles():
     base_projectile_speed = 0.2
     scaled_projectile_speed = base_projectile_speed * get_speed_multiplier()
     pirates_to_remove = set()
-    max_distance = TURRET_RANGE  # Despawn after traveling 4 tiles (adjustable)
+    max_distance = TURRET_RANGE
 
     for proj in projectiles[:]:
         next_x = proj["x"] + proj["dir"][0] * scaled_projectile_speed
         next_y = proj["y"] + proj["dir"][1] * scaled_projectile_speed
         tile_x, tile_y = int(next_x), int(next_y)
 
-        # Check distance traveled
         distance_traveled = math.hypot(next_x - proj["start_x"], next_y - proj["start_y"])
         if distance_traveled > max_distance:
             projectiles.remove(proj)
@@ -1414,8 +1414,12 @@ def update_projectiles():
         for p in pirates[:]:
             for pirate in p["pirates"][:]:
                 if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
-                    pirate["health"] -= proj["damage"]  # Apply damage based on turret level
-                    if pirate["health"] == 1:
+                    # Store health before damage
+                    pre_hit_health = pirate["health"]
+                    pirate["health"] -= proj["damage"]
+                    # Check if health reaches 1 or if this hit kills the pirate
+                    if pre_hit_health > 1 and pirate["health"] == 1:
+                        # Health exactly at 1, spawn hat
                         hat_particles.append({
                             "x": pirate["x"],
                             "y": pirate["y"] - 0.5,
@@ -1427,6 +1431,21 @@ def update_projectiles():
                             "initial_timer": 1000,
                             "level": pirate["level"]
                         })
+                        pirate["has_dropped_hat"] = True
+                    if pirate["health"] <= 0 and not pirate.get("has_dropped_hat", False):
+                        # Lethal hit and no hat dropped yet, spawn hat
+                        hat_particles.append({
+                            "x": pirate["x"],
+                            "y": pirate["y"] - 0.5,
+                            "vel_x": random.uniform(-0.05, 0.05),
+                            "vel_y": -0.1,
+                            "rotation": 0,
+                            "rotation_speed": random.uniform(-10, 10),
+                            "timer": 1000,
+                            "initial_timer": 1000,
+                            "level": pirate["level"]
+                        })
+                        pirate["has_dropped_hat"] = True
                     if pirate["health"] <= 0:
                         if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
                             for key in ["fuse_timer", "fuse_count", "last_count_update"]:
