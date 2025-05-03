@@ -1519,6 +1519,14 @@ def update_projectiles():
                         if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
                             for key in ["fuse_timer", "fuse_count", "last_count_update"]:
                                 pirate.pop(key, None)
+                        # Check for rare pirate loot drop
+                        if pirate.get("is_rare", False):
+                            pirate_tile_x, pirate_tile_y = int(pirate["x"]), int(pirate["y"])
+                            tile_type = get_tile(pirate_tile_x, pirate_tile_y)
+                            if (tile_type in MOVEMENT_TILES and 
+                                tile_type not in (WATER, BOAT_TILE, TURRET) and 
+                                random.random() < 0.33):
+                                set_tile(pirate_tile_x, pirate_tile_y, LOOT)
                         p["pirates"].remove(pirate)
                         pirates_killed += 1
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
