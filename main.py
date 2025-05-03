@@ -602,23 +602,48 @@ def draw_grid():
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
 
-    # Render NPCs
-    for npc in npcs:
-        for s in npc["ship"]:
-            sx = s["x"] - top_left_x
-            sy = s["y"] - top_left_y
-            if darkness_factor == 1.0 and (
-                sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
-            ):
-                continue
-            if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
-                if npc["state"] == "boat":
-                    boat_tile_image = tile_images.get(BOAT_TILE)
-                    if boat_tile_image:
-                        game_surface.blit(pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
-                elif npc["state"] == "docked":
-                    npc_image = npc["sprite"]
-                    game_surface.blit(pygame.transform.scale(npc_image, (TILE_SIZE, TILE_SIZE)), (sx * TILE_SIZE, sy * TILE_SIZE))
+        # Render NPCs
+        for npc in npcs:
+            for s in npc["ship"]:
+                sx = s["x"] - top_left_x
+                sy = s["y"] - top_left_y
+                # Skip tiles within 2 tiles of edge during full night
+                if darkness_factor == 1.0 and (
+                    sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
+                ):
+                    continue
+                if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
+                    if npc["state"] == "boat":
+                        # Render ship tile
+                        boat_tile_image = tile_images.get(BOAT_TILE)
+                        if boat_tile_image:
+                            scaled_boat = pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE))
+                            if darkness_factor == 1.0:
+                                dist_to_edge = min(sx, VIEW_WIDTH - sx, sy, VIEW_HEIGHT - sy)
+                                if dist_to_edge <= 2:
+                                    alpha = 0
+                                elif dist_to_edge >= 5:
+                                    alpha = 255
+                                else:
+                                    alpha = int(255 * (dist_to_edge - 2) / (5 - 2))
+                                scaled_boat.set_alpha(alpha)
+                            else:
+                                scaled_boat.set_alpha(255)
+                            game_surface.blit(scaled_boat, (sx * TILE_SIZE, sy * TILE_SIZE))
+                        # Render NPC sprite on main ship tile
+                        if s["x"] == npc["x"] and s["y"] == npc["y"]:
+                            npc_image = npc["sprite"]
+                            scaled_npc = pygame.transform.scale(npc_image, (TILE_SIZE, TILE_SIZE))
+                            if darkness_factor == 1.0:
+                                scaled_npc.set_alpha(alpha)  # Use same alpha as ship
+                            else:
+                                scaled_npc.set_alpha(255)
+                            game_surface.blit(scaled_npc, (sx * TILE_SIZE, sy * TILE_SIZE))
+                    elif npc["state"] == "docked":
+                        npc_image = npc["sprite"]
+                        scaled_npc = pygame.transform.scale(npc_image, (TILE_SIZE, TILE_SIZE))
+                        scaled_npc.set_alpha(255)  # Always opaque when docked
+                        game_surface.blit(scaled_npc, (sx * TILE_SIZE, sy * TILE_SIZE))
 
     # Render selected tile overlay and wall placement preview
     if selected_tile:
