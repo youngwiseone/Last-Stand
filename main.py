@@ -81,6 +81,7 @@ sound_place_turret = pygame.mixer.Sound("Assets/sound/place_turret.wav")
 # --- Colors ---
 BLUE = (50, 150, 255)
 GREEN = (50, 200, 50)
+DARK_GREEN = (50, 150, 50)
 BROWN = (139, 69, 19)
 DARK_GRAY = (80, 80, 80)
 WHITE = (255, 255, 255)
@@ -280,9 +281,10 @@ def get_tile(x, y):
     return tile
 
 def set_tile(x, y, tile_type):
+    global minimap_cache_valid, chunks_version
     cx, cy = world_to_chunk(x, y)
-    tx = int(x % CHUNK_SIZE)  # Ensure integer
-    ty = int(y % CHUNK_SIZE)  # Ensure integer
+    tx = int(x % CHUNK_SIZE)
+    ty = int(y % CHUNK_SIZE)
     if tx < 0: tx += CHUNK_SIZE
     if ty < 0: ty += CHUNK_SIZE
     if (cx, cy) not in chunks:
@@ -293,7 +295,9 @@ def set_tile(x, y, tile_type):
             chunks[(cx, cy)] = generate_chunk(cx, cy)
     chunks[(cx, cy)][ty][tx] = tile_type
     tile_cache[(x, y)] = tile_type
-    save_chunk(cx, cy, chunks[(cx, cy)])  # Save the modified chunk
+    save_chunk(cx, cy, chunks[(cx, cy)])
+    minimap_cache_valid = False
+    chunks_version += 1
 
 # --- Initialize Starting Area ---
 def initialize_starting_area():
@@ -305,8 +309,6 @@ def initialize_starting_area():
     for y in range(-1, 2):
         for x in range(-1, 2):
             set_tile(x, y, LAND)
-
-initialize_starting_area()
 
 def load_chunk(cx, cy):
     filename = f"{CHUNK_DIR}/chunk_{cx}_{cy}.pkl"
@@ -322,8 +324,10 @@ def update_player_chunk():
     player_chunk = world_to_chunk(player_pos[0], player_pos[1])
 
 def manage_chunks():
+    global minimap_cache_valid, chunks_version
     cx, cy = player_chunk
     loaded_chunks = set()
+    chunks_changed = False
     for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
         for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
             chunk_key = (cx + dx, cy + dy)
@@ -334,20 +338,29 @@ def manage_chunks():
                     chunks[chunk_key] = loaded_data
                 else:
                     chunks[chunk_key] = generate_chunk(cx + dx, cy + dy)
+                chunks_changed = True
     for key in list(chunks.keys()):
         if key not in loaded_chunks:
             save_chunk(key[0], key[1], chunks[key])
-            # Clear cache entries for unloaded chunk
             cx, cy = key
             for ty in range(CHUNK_SIZE):
                 for tx in range(CHUNK_SIZE):
                     wx, wy = chunk_to_world(cx, cy, tx, ty)
                     tile_cache.pop((wx, wy), None)
             del chunks[key]
+            chunks_changed = True
+    if chunks_changed:
+        minimap_cache_valid = False
+        chunks_version += 1  # Increment version when chunks change
 
 # --- Game State ---
 selected_tile = None  # Will store the (x, y) of the tile under the mouse
 game_time = 24.0  # Add this line after other global variables like wood, player_pos, etc.
+minimap_base_cache = None  # Cached base layer of the minimap (tiles only)
+minimap_cache_valid = False  # Flag to indicate if the cache needs to be updated
+last_player_chunk = player_chunk  # Track the last chunk to detect movement
+chunks_version = 0  # Version counter for tracking changes to chunks
+last_chunks_version = 0  # Last version seen by the minimap
 
 turrets_placed = 0
 pirates_killed = 0
@@ -404,6 +417,8 @@ waller_npc_spawned = False  # Flag to ensure NPC spawns only once
 wall_placement_mode = False  # Tracks if player is in wall placement mode
 
 game_surface = pygame.Surface((WIDTH, HEIGHT))
+
+initialize_starting_area()
 
 # --- Drawing ---
 def draw_grid():
@@ -778,53 +793,110 @@ def draw_ui():
     screen.blit(time_text, (10, 130))
 
 def draw_minimap():
-    """Simplified minimap showing nearby chunks."""
+    """Simplified minimap showing nearby chunks, with nighttime visibility limited to view distance."""
+    global minimap_base_cache, minimap_cache_valid, last_player_chunk, last_chunks_version
     minimap_scale = 3
     minimap_size = VIEW_CHUNKS * CHUNK_SIZE * minimap_scale
-    minimap_surface = pygame.Surface((minimap_size, minimap_size))
+    darkness_factor = get_darkness_factor(game_time)
+
+    # Calculate the view area in world coordinates
     cx, cy = player_chunk
-    for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
-        for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
-            chunk_key = (cx + dx, cy + dy)
-            if chunk_key in chunks:
-                chunk = chunks[chunk_key]
-                for my in range(CHUNK_SIZE):
-                    for mx in range(CHUNK_SIZE):
-                        tile = chunk[my][mx]
-                        color = {
-                            WATER: BLUE,
-                            LAND: GREEN,
-                            TREE: BROWN,
-                            SAPLING: (150, 255, 150),
-                            WALL: DARK_GRAY,
-                            TURRET: YELLOW,
-                            BOAT_TILE: TAN,
-                            USED_LAND: LIGHT_GRAY,
-                            LOOT: ORANGE,
-                            BOAT_TILE_STAGE_2: (180, 200, 140),  # Between TAN and GREEN
-                            BOAT_TILE_STAGE_3: (115, 220, 140)   # Closer to GREEN
-                        }.get(tile, BLACK)
-                        world_x, world_y = chunk_to_world(cx + dx, cy + dy, mx, my)
-                        if (world_x, world_y) == (int(player_pos[0]), int(player_pos[1])):
-                            color = WHITE
-                        mx_map = (dx + VIEW_CHUNKS // 2) * CHUNK_SIZE + mx
-                        my_map = (dy + VIEW_CHUNKS // 2) * CHUNK_SIZE + my
-                        pygame.draw.rect(minimap_surface, color, (mx_map * minimap_scale, my_map * minimap_scale, minimap_scale, minimap_scale))
+    view_left = player_pos[0] - VIEW_WIDTH / 2.0
+    view_right = player_pos[0] + VIEW_WIDTH / 2.0
+    view_top = player_pos[1] - VIEW_HEIGHT / 2.0
+    view_bottom = player_pos[1] + VIEW_HEIGHT / 2.0
 
-    cam_x = (player_pos[0] % CHUNK_SIZE + (VIEW_CHUNKS // 2) * CHUNK_SIZE - VIEW_WIDTH // 2) * minimap_scale
-    cam_y = (player_pos[1] % CHUNK_SIZE + (VIEW_CHUNKS // 2) * CHUNK_SIZE - VIEW_HEIGHT // 2) * minimap_scale
-    cam_rect = pygame.Rect(cam_x, cam_y, VIEW_WIDTH * minimap_scale, VIEW_HEIGHT * minimap_scale)
-    pygame.draw.rect(minimap_surface, WHITE, cam_rect, 1)
+    # Determine the top-left world coordinates of the minimap
+    top_left_chunk_x = cx - VIEW_CHUNKS // 2
+    top_left_chunk_y = cy - VIEW_CHUNKS // 2
+    top_left_world_x = top_left_chunk_x * CHUNK_SIZE
+    top_left_world_y = top_left_chunk_y * CHUNK_SIZE
 
+    # Check if the cache needs to be updated
+    if (not minimap_cache_valid or player_chunk != last_player_chunk or 
+        last_chunks_version != chunks_version):
+        # Create a new base layer for tiles
+        minimap_base_cache = pygame.Surface((minimap_size, minimap_size))
+        for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
+            for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
+                chunk_key = (cx + dx, cy + dy)
+                if chunk_key in chunks:
+                    chunk = chunks[chunk_key]
+                    for my in range(CHUNK_SIZE):
+                        for mx in range(CHUNK_SIZE):
+                            tile = chunk[my][mx]
+                            world_x, world_y = chunk_to_world(cx + dx, cy + dy, mx, my)
+                            # Always draw all tiles in the base layer
+                            color = {
+                                WATER: BLUE,
+                                LAND: GREEN,
+                                TREE: DARK_GREEN,
+                                SAPLING: (150, 255, 150),
+                                WALL: BROWN,
+                                TURRET: DARK_GRAY,
+                                BOAT_TILE: TAN,
+                                USED_LAND: LIGHT_GRAY,
+                                LOOT: YELLOW,
+                                BOAT_TILE_STAGE_2: (180, 200, 140),
+                                BOAT_TILE_STAGE_3: (115, 220, 140)
+                            }.get(tile, BLACK)
+                            mx_map = (dx + VIEW_CHUNKS // 2) * CHUNK_SIZE + mx
+                            my_map = (dy + VIEW_CHUNKS // 2) * CHUNK_SIZE + my
+                            pygame.draw.rect(minimap_base_cache, color, 
+                                           (mx_map * minimap_scale, my_map * minimap_scale, 
+                                            minimap_scale, minimap_scale))
+        minimap_cache_valid = True
+        last_player_chunk = player_chunk
+        last_chunks_version = chunks_version  # Update the last seen version
+
+    # Create the minimap surface by copying the base layer
+    minimap_surface = minimap_base_cache.copy()
+
+    # Highlight the player's position
+    world_x, world_y = int(player_pos[0]), int(player_pos[1])
+    mx_map = (world_x - top_left_world_x) * minimap_scale
+    my_map = (world_y - top_left_world_y) * minimap_scale
+    if 0 <= mx_map < minimap_size and 0 <= my_map < minimap_size:
+        pygame.draw.rect(minimap_surface, WHITE, 
+                        (int(mx_map), int(my_map), minimap_scale, minimap_scale))
+
+    # Draw pirates and NPCs, respecting nighttime visibility
     for p in pirates:
-        mx = (p["x"] - (cx - VIEW_CHUNKS // 2) * CHUNK_SIZE) * minimap_scale
-        my = (p["y"] - (cy - VIEW_CHUNKS // 2) * CHUNK_SIZE) * minimap_scale
-        pygame.draw.rect(minimap_surface, RED, (int(mx), int(my), minimap_scale, minimap_scale))
+        world_x, world_y = p["x"], p["y"]
+        is_in_view = (view_left <= world_x < view_right and view_top <= world_y < view_bottom)
+        if is_in_view or darkness_factor == 0.0:
+            mx = (world_x - top_left_world_x) * minimap_scale
+            my = (world_y - top_left_world_y) * minimap_scale
+            if 0 <= mx < minimap_size and 0 <= my < minimap_size:
+                pygame.draw.rect(minimap_surface, RED, 
+                               (int(mx), int(my), minimap_scale, minimap_scale))
 
     for npc in npcs:
-        mx = (npc["x"] - (cx - VIEW_CHUNKS // 2) * CHUNK_SIZE) * minimap_scale
-        my = (npc["y"] - (cy - VIEW_CHUNKS // 2) * CHUNK_SIZE) * minimap_scale
-        pygame.draw.rect(minimap_surface, (255, 200, 200), (int(mx), int(my), minimap_scale, minimap_scale))  # Purple for NPC
+        world_x, world_y = npc["x"], npc["y"]
+        is_in_view = (view_left <= world_x < view_right and view_top <= world_y < view_bottom)
+        if is_in_view or darkness_factor == 0.0:
+            mx = (world_x - top_left_world_x) * minimap_scale
+            my = (world_y - top_left_world_y) * minimap_scale
+            if 0 <= mx < minimap_size and 0 <= my < minimap_size:
+                pygame.draw.rect(minimap_surface, (255, 200, 200), 
+                               (int(mx), int(my), minimap_scale, minimap_scale))
+
+    # Apply darkness overlay during fade or full night for tiles outside view
+    if darkness_factor > 0.0:
+        overlay_surface = pygame.Surface((minimap_size, minimap_size), pygame.SRCALPHA)
+        overlay_alpha = int(darkness_factor * 255)
+        overlay_surface.fill((0, 0, 0, overlay_alpha))
+        cam_x = (player_pos[0] - top_left_world_x - VIEW_WIDTH / 2) * minimap_scale
+        cam_y = (player_pos[1] - top_left_world_y - VIEW_HEIGHT / 2) * minimap_scale
+        view_rect = pygame.Rect(cam_x, cam_y, VIEW_WIDTH * minimap_scale, VIEW_HEIGHT * minimap_scale)
+        overlay_surface.fill((0, 0, 0, 0), view_rect)
+        minimap_surface.blit(overlay_surface, (0, 0))
+
+    # Draw the view rectangle on top
+    cam_x = (player_pos[0] - top_left_world_x - VIEW_WIDTH / 2) * minimap_scale
+    cam_y = (player_pos[1] - top_left_world_y - VIEW_HEIGHT / 2) * minimap_scale
+    cam_rect = pygame.Rect(cam_x, cam_y, VIEW_WIDTH * minimap_scale, VIEW_HEIGHT * minimap_scale)
+    pygame.draw.rect(minimap_surface, WHITE, cam_rect, 1)
 
     screen_width, _ = screen.get_size()
     minimap_x = screen_width - minimap_surface.get_width() - 10
@@ -1842,7 +1914,7 @@ def update_trees():
 def update_player_movement():
     global player_pos, facing, player_chunk
     keys = pygame.key.get_pressed()
-    base_speed = 0.2  # Base movement speed (pixels per frame at SCALE = 2)
+    base_speed = 0.15  # Base movement speed (pixels per frame at SCALE = 2)
     speed = base_speed * get_speed_multiplier()  # Adjust speed based on scale
     dx, dy = 0.0, 0.0
 
