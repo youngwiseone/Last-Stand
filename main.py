@@ -341,7 +341,7 @@ def manage_chunks():
 
 # --- Game State ---
 selected_tile = None  # Will store the (x, y) of the tile under the mouse
-game_time = 0.0  # Add this line after other global variables like wood, player_pos, etc.
+game_time = 24.0  # Add this line after other global variables like wood, player_pos, etc.
 
 turrets_placed = 0
 pirates_killed = 0
@@ -390,7 +390,7 @@ land_spread_time = 30000
 
 pirates = []
 pirate_spawn_timer = 0
-spawn_delay = 5000
+spawn_delay = 3000
 pirate_walk_delay = 300
 
 npcs = []  # List to store NPCs
@@ -1369,8 +1369,10 @@ def update_sparks():
 
 def update_projectiles():
     global pirates_killed, wood
-    base_projectile_speed = 0.2  # Base projectile speed at SCALE = 2
-    scaled_projectile_speed = base_projectile_speed * get_speed_multiplier()  # Adjust speed based on scale
+    base_projectile_speed = 0.2
+    scaled_projectile_speed = base_projectile_speed * get_speed_multiplier()
+    pirates_to_remove = set()  # Track pirate groups to remove
+
     for proj in projectiles[:]:
         next_x = proj["x"] + proj["dir"][0] * scaled_projectile_speed
         next_y = proj["y"] + proj["dir"][1] * scaled_projectile_speed
@@ -1416,7 +1418,6 @@ def update_projectiles():
                             "level": pirate["level"]
                         })
                     if pirate["health"] <= 0:
-                        # Cancel fuse for Explosive pirate
                         if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
                             for key in ["fuse_timer", "fuse_count", "last_count_update"]:
                                 pirate.pop(key, None)
@@ -1452,11 +1453,15 @@ def update_projectiles():
                 if hit:
                     break
 
+            # Mark pirate group for removal if empty
+            if not p["pirates"] and not p["ship"]:
+                pirates_to_remove.add(id(p))  # Use object ID to uniquely identify p
+
         if hit and proj in projectiles:
             projectiles.remove(proj)
 
-        if not p["pirates"] and not p["ship"]:
-            pirates.remove(p)
+    # Remove empty pirate groups after processing all projectiles
+    pirates[:] = [p for p in pirates if id(p) not in pirates_to_remove]
 
 def draw_interaction_ui():
     if not interaction_ui["left_message"] and not interaction_ui["right_message"]:
@@ -1759,41 +1764,46 @@ def update_player_movement():
             manage_chunks()
 
 def get_darkness_factor(game_time):
-    """Calculate the darkness factor based on game time, with fade-in/out."""
-    cycle = 48.0  # Total cycle length: 24s day + 24s night
+    cycle = 96.0  # Total cycle length: 48s day + 48s night
     t = game_time % cycle
-    # Day: 7am (14s) to 7pm (38s)
-    if 14 <= t < 38:
+    # Day: 7am (28s) to 7pm (76s)
+    if 28 <= t < 76:
         return 0.0  # Full day
-    # Fade-in: 7pm (38s) to 8pm (40s)
-    elif 38 <= t < 40:
-        progress = (t - 38) / 2  # 2-second fade
+    # Fade-in: 7pm (76s) to 8pm (80s)
+    elif 76 <= t < 80:
+        progress = (t - 76) / 4  # 4-second fade (doubled from 2s)
         return progress
-    # Full night: 8pm (40s) to 6am (12s next cycle)
-    elif (40 <= t < 48) or (0 <= t < 12):
+    # Full night: 8pm (80s) to 6am (24s next cycle)
+    elif (80 <= t < 96) or (0 <= t < 24):
         return 1.0  # Full night
-    # Fade-out: 6am (12s) to 7am (14s)
-    elif 12 <= t < 14:
-        progress = (t - 12) / 2  # 2-second fade
+    # Fade-out: 6am (24s) to 7am (28s)
+    elif 24 <= t < 28:
+        progress = (t - 24) / 4  # 4-second fade (doubled from 2s)
         return 1.0 - progress
     return 0.0
 
 def is_night(game_time):
-    """Determine if it’s night (7pm to 7am)."""
-    t = game_time % 48
-    return t >= 38 or t < 14  # Night from 38s (7pm) to 14s (7am)
+    t = game_time % 96
+    return t >= 76 or t < 28  # Night from 76s (7pm) to 28s (7am)
 
 def get_time_string(game_time):
-    """Convert game time to a 12-hour clock string (e.g., '1:00am')."""
-    cycle = 48.0
-    total_minutes = (game_time % cycle) * 30  # Each second = 30 minutes
+    cycle = 96.0
+    total_minutes = (game_time % cycle) * 15  # Each second = 15 minutes
     hour = int(total_minutes // 60) % 24
     minute = total_minutes % 60
     display_hour = hour % 12
     if display_hour == 0:
         display_hour = 12
     period = "am" if hour < 12 else "pm"
-    minute_str = "00" if minute < 15 else "30"  # Only :00 or :30
+    # Map minutes to 15-minute increments
+    if minute < 7.5:
+        minute_str = "00"
+    elif minute < 22.5:
+        minute_str = "15"
+    elif minute < 37.5:
+        minute_str = "30"
+    else:
+        minute_str = "45"
     return f"{display_hour}:{minute_str}{period}"
 
 # --- Game Loop ---
@@ -1865,7 +1875,8 @@ while running:
         waller_npc_spawned = True
 
     pirate_spawn_timer += clock.get_time()
-    if pirate_spawn_timer >= spawn_delay and is_night(game_time):
+    t = game_time % 96
+    if pirate_spawn_timer >= spawn_delay and ((t > 24 and t < 28) or (t >= 76 and t < 96)):
         spawn_pirate()
         pirate_spawn_timer = 0
 
