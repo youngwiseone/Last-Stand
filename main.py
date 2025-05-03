@@ -591,8 +591,12 @@ def draw_grid():
         sel_px = sel_x - top_left_x
         sel_py = sel_y - top_left_y
         if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
+            # Calculate Manhattan distance from player
+            player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
+            manhattan_dist = abs(sel_x - player_tile_x) + abs(sel_y - player_tile_y)
+            overlay_color = (0, 0, 0, 16) if manhattan_dist > 3 else (0, 0, 0, 128)
             overlay_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-            overlay_surface.fill((0, 0, 0, 128))
+            overlay_surface.fill(overlay_color)
             game_surface.blit(overlay_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
     if wall_placement_mode and selected_tile:
         sel_x, sel_y = selected_tile
@@ -1589,6 +1593,11 @@ def interact(button):
     if not selected_tile:
         return
     x, y = selected_tile
+    # Check Manhattan distance from player
+    player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
+    manhattan_dist = abs(x - player_tile_x) + abs(y - player_tile_y)
+    if manhattan_dist > 3:
+        return  # Block interactions if too far
     tile = get_tile(x, y)
     
     if button == 1:  # Left-click
