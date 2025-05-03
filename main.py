@@ -815,7 +815,6 @@ def draw_minimap():
     # Check if the cache needs to be updated
     if (not minimap_cache_valid or player_chunk != last_player_chunk or 
         last_chunks_version != chunks_version):
-        # Create a new base layer for tiles
         minimap_base_cache = pygame.Surface((minimap_size, minimap_size))
         for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
             for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
@@ -826,7 +825,6 @@ def draw_minimap():
                         for mx in range(CHUNK_SIZE):
                             tile = chunk[my][mx]
                             world_x, world_y = chunk_to_world(cx + dx, cy + dy, mx, my)
-                            # Always draw all tiles in the base layer
                             color = {
                                 WATER: BLUE,
                                 LAND: GREEN,
@@ -847,7 +845,7 @@ def draw_minimap():
                                             minimap_scale, minimap_scale))
         minimap_cache_valid = True
         last_player_chunk = player_chunk
-        last_chunks_version = chunks_version  # Update the last seen version
+        last_chunks_version = chunks_version
 
     # Create the minimap surface by copying the base layer
     minimap_surface = minimap_base_cache.copy()
@@ -857,44 +855,58 @@ def draw_minimap():
     mx_map = (world_x - top_left_world_x) * minimap_scale
     my_map = (world_y - top_left_world_y) * minimap_scale
     if 0 <= mx_map < minimap_size and 0 <= my_map < minimap_size:
-        pygame.draw.rect(minimap_surface, WHITE, 
-                        (int(mx_map), int(my_map), minimap_scale, minimap_scale))
+        # Player marker fades slightly at night
+        player_alpha = int(255 * (1 - darkness_factor * 0.3))  # Fade to 70% opacity at full night
+        player_surface = pygame.Surface((minimap_scale, minimap_scale), pygame.SRCALPHA)
+        player_surface.fill((255, 255, 255, player_alpha))
+        minimap_surface.blit(player_surface, (int(mx_map), int(my_map)))
 
-    # Draw pirates and NPCs, respecting nighttime visibility
+    # Draw pirates and NPCs with fading visibility
     for p in pirates:
         world_x, world_y = p["x"], p["y"]
         is_in_view = (view_left <= world_x < view_right and view_top <= world_y < view_bottom)
-        if is_in_view or darkness_factor == 0.0:
-            mx = (world_x - top_left_world_x) * minimap_scale
-            my = (world_y - top_left_world_y) * minimap_scale
-            if 0 <= mx < minimap_size and 0 <= my < minimap_size:
-                pygame.draw.rect(minimap_surface, RED, 
-                               (int(mx), int(my), minimap_scale, minimap_scale))
+        mx = (world_x - top_left_world_x) * minimap_scale
+        my = (world_y - top_left_world_y) * minimap_scale
+        if 0 <= mx < minimap_size and 0 <= my < minimap_size:
+            # Calculate alpha based on visibility
+            if is_in_view:
+                alpha = 255  # Always fully visible in view
+            else:
+                alpha = int(255 * (1 - darkness_factor))  # Fade out as darkness increases
+            if alpha > 0:  # Only draw if not fully faded
+                pirate_surface = pygame.Surface((minimap_scale, minimap_scale), pygame.SRCALPHA)
+                pirate_surface.fill((255, 0, 0, alpha))
+                minimap_surface.blit(pirate_surface, (int(mx), int(my)))
 
     for npc in npcs:
         world_x, world_y = npc["x"], npc["y"]
         is_in_view = (view_left <= world_x < view_right and view_top <= world_y < view_bottom)
-        if is_in_view or darkness_factor == 0.0:
-            mx = (world_x - top_left_world_x) * minimap_scale
-            my = (world_y - top_left_world_y) * minimap_scale
-            if 0 <= mx < minimap_size and 0 <= my < minimap_size:
-                pygame.draw.rect(minimap_surface, (255, 200, 200), 
-                               (int(mx), int(my), minimap_scale, minimap_scale))
+        mx = (world_x - top_left_world_x) * minimap_scale
+        my = (world_y - top_left_world_y) * minimap_scale
+        if 0 <= mx < minimap_size and 0 <= my < minimap_size:
+            if is_in_view:
+                alpha = 255
+            else:
+                alpha = int(255 * (1 - darkness_factor))
+            if alpha > 0:
+                npc_surface = pygame.Surface((minimap_scale, minimap_scale), pygame.SRCALPHA)
+                npc_surface.fill((255, 200, 200, alpha))
+                minimap_surface.blit(npc_surface, (int(mx), int(my)))
 
-    # Apply darkness overlay during fade or full night for tiles outside view
-    if darkness_factor > 0.0:
-        overlay_surface = pygame.Surface((minimap_size, minimap_size), pygame.SRCALPHA)
-        overlay_alpha = int(darkness_factor * 255)
-        overlay_surface.fill((0, 0, 0, overlay_alpha))
-        cam_x = (player_pos[0] - top_left_world_x - VIEW_WIDTH / 2) * minimap_scale
-        cam_y = (player_pos[1] - top_left_world_y - VIEW_HEIGHT / 2) * minimap_scale
-        view_rect = pygame.Rect(cam_x, cam_y, VIEW_WIDTH * minimap_scale, VIEW_HEIGHT * minimap_scale)
-        overlay_surface.fill((0, 0, 0, 0), view_rect)
-        minimap_surface.blit(overlay_surface, (0, 0))
-
-    # Draw the view rectangle on top
+    # Apply darkness overlay with a gradient effect
+    overlay_surface = pygame.Surface((minimap_size, minimap_size), pygame.SRCALPHA)
+    # Full darkness for areas outside the view rectangle
+    outside_alpha = int(darkness_factor * 255)  # Max 255 alpha (fully dark) at full night
+    overlay_surface.fill((0, 0, 0, outside_alpha))
+    # Reduced darkness for the view area (slight dimming at night)
+    view_alpha = int(darkness_factor * 128)  # Max 128 alpha (50% darkness) in view area at full night
     cam_x = (player_pos[0] - top_left_world_x - VIEW_WIDTH / 2) * minimap_scale
     cam_y = (player_pos[1] - top_left_world_y - VIEW_HEIGHT / 2) * minimap_scale
+    view_rect = pygame.Rect(cam_x, cam_y, VIEW_WIDTH * minimap_scale, VIEW_HEIGHT * minimap_scale)
+    overlay_surface.fill((0, 0, 0, view_alpha), view_rect)  # Apply reduced darkness in view area
+    minimap_surface.blit(overlay_surface, (0, 0))
+
+    # Draw the view rectangle on top (always fully visible)
     cam_rect = pygame.Rect(cam_x, cam_y, VIEW_WIDTH * minimap_scale, VIEW_HEIGHT * minimap_scale)
     pygame.draw.rect(minimap_surface, WHITE, cam_rect, 1)
 
