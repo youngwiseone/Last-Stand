@@ -128,6 +128,15 @@ tile_images = {
     "WALL_TOP": pygame.image.load("Assets/wall_top.png").convert(),
     BOULDER: pygame.image.load("Assets/boulder.png").convert_alpha()  # Add boulder image
 }
+# --- Load Tile Images ---
+tile_images.update({
+    "KRAKEN": pygame.image.load("Assets/kraken.png").convert_alpha()  # Ensure you have a kraken.png in Assets
+})
+
+# Kraken-specific constants
+KRAKEN_SPAWN_CHANCE = 0.50  # 10% chance per night spawn cycle
+KRAKEN_MOVE_SPEED = 0.05  # Same as pirate ship speed
+KRAKEN_DESTROY_DELAY = 1000  # 1 second to destroy a boat tile
 
 water_frames = [
     pygame.image.load("Assets/water.png").convert(),
@@ -387,6 +396,8 @@ interaction_ui_enabled = False
 last_player_pos = list(player_pos)
 stationary_timer = 0
 STATIONARY_DELAY = 500
+
+krakens = []  # List to store Kraken entities
 
 interaction_ui = {
     "left_message": "",
@@ -679,6 +690,19 @@ def draw_grid():
                         scaled_npc.set_alpha(255)  # Always opaque when docked
                         game_surface.blit(scaled_npc, (sx * TILE_SIZE, sy * TILE_SIZE))
 
+    # In draw_grid(), after rendering pirates
+    for kraken in krakens:
+        if kraken["state"] in ["moving", "destroying"]:
+            kx = kraken["x"] - top_left_x
+            ky = kraken["y"] - top_left_y
+            if 0 <= kx < VIEW_WIDTH and 0 <= ky < VIEW_HEIGHT:
+                darkness_factor = get_darkness_factor(game_time)
+                kraken_image = tile_images["KRAKEN"]
+                scaled_image = pygame.transform.scale(kraken_image, (TILE_SIZE, TILE_SIZE))
+                alpha = 255 if darkness_factor < 1.0 else int(255 * (1 - darkness_factor))
+                scaled_image.set_alpha(alpha)
+                game_surface.blit(scaled_image, (kx * TILE_SIZE, ky * TILE_SIZE))
+
     # Render selected tile overlay and wall placement preview
     if selected_tile:
         sel_x, sel_y = selected_tile
@@ -907,7 +931,18 @@ def draw_minimap():
                 pirate_surface = pygame.Surface((minimap_scale, minimap_scale), pygame.SRCALPHA)
                 pirate_surface.fill((255, 0, 0, alpha))
                 minimap_surface.blit(pirate_surface, (int(mx), int(my)))
-
+    # After drawing pirates on minimap
+    for kraken in krakens:
+        world_x, world_y = kraken["x"], kraken["y"]
+        is_in_view = (view_left <= world_x < view_right and view_top <= world_y < view_bottom)
+        mx = (world_x - top_left_world_x) * minimap_scale
+        my = (world_y - top_left_world_y) * minimap_scale
+        if 0 <= mx < minimap_size and 0 <= my < minimap_size:
+            alpha = 255 if is_in_view else int(255 * (1 - darkness_factor))
+            if alpha > 0:
+                kraken_surface = pygame.Surface((minimap_scale, minimap_scale), pygame.SRCALPHA)
+                kraken_surface.fill((0, 0, 255, alpha))  # Blue for Kraken
+                minimap_surface.blit(kraken_surface, (int(mx), int(my)))
     for npc in npcs:
         world_x, world_y = npc["x"], npc["y"]
         is_in_view = (view_left <= world_x < view_right and view_top <= world_y < view_bottom)
@@ -1177,6 +1212,37 @@ def spawn_pirate():
         "state": "boat",
         "ship": [{"x": sx, "y": sy} for sx, sy in ship_tiles],
         "pirates": pirates_data
+    })
+
+def spawn_kraken():
+    global krakens
+    if random.random() > KRAKEN_SPAWN_CHANCE:
+        return  # Random chance to skip spawning
+    # Find water tiles near boat tiles
+    cx, cy = player_chunk
+    water_tiles = []
+    for chunk_key in [(cx + dx, cy + dy) for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
+                     for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)]:
+        if chunk_key in chunks:
+            chunk = chunks[chunk_key]
+            for ty in range(CHUNK_SIZE):
+                for tx in range(CHUNK_SIZE):
+                    world_x, world_y = chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
+                    if get_tile(world_x, world_y) == WATER:
+                        # Check for nearby boat tiles
+                        for nx, ny in [(world_x, world_y-1), (world_x, world_y+1), (world_x-1, world_y), (world_x+1, world_y)]:
+                            if get_tile(nx, ny) in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
+                                water_tiles.append((world_x, world_y))
+                                break
+    if not water_tiles:
+        return
+    x, y = random.choice(water_tiles)
+    krakens.append({
+        "x": float(x),
+        "y": float(y),
+        "state": "searching",
+        "target_tile": None,
+        "last_destroy": pygame.time.get_ticks()
     })
 
 def spawn_waller_npc():
@@ -1475,6 +1541,49 @@ def update_pirates():
                 avg_y = sum(pirate["y"] for pirate in p["pirates"]) / len(p["pirates"])
                 p["x"], p["y"] = avg_x, avg_y
             p["walk_timer"] = now
+
+def update_krakens():
+    global krakens
+    now = pygame.time.get_ticks()
+    for kraken in krakens[:]:
+        if not is_night(game_time):
+            krakens.remove(kraken)  # Krakens despawn during day
+            continue
+        if kraken["state"] == "searching":
+            # Find nearest boat tile
+            nearest_tile = None
+            min_dist = float("inf")
+            for y in range(-VIEW_HEIGHT // 2, VIEW_HEIGHT // 2 + 1):
+                for x in range(-VIEW_WIDTH // 2, VIEW_WIDTH // 2 + 1):
+                    tx = int(kraken["x"]) + x
+                    ty = int(kraken["y"]) + y
+                    if get_tile(tx, ty) in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
+                        dist = math.hypot(tx - kraken["x"], ty - kraken["y"])
+                        if dist < min_dist:
+                            min_dist = dist
+                            nearest_tile = (tx, ty)
+            if nearest_tile:
+                kraken["target_tile"] = nearest_tile
+                kraken["state"] = "moving"
+        elif kraken["state"] == "moving":
+            tx, ty = kraken["target_tile"]
+            dx = tx - kraken["x"]
+            dy = ty - kraken["y"]
+            length = math.hypot(dx, dy) or 1
+            scaled_speed = KRAKEN_MOVE_SPEED * get_speed_multiplier()
+            kraken["x"] += (dx / length) * scaled_speed
+            kraken["y"] += (dy / length) * scaled_speed
+            if math.hypot(kraken["x"] - tx, kraken["y"] - ty) < 0.1:
+                kraken["state"] = "destroying"
+                kraken["last_destroy"] = now
+        elif kraken["state"] == "destroying":
+            tx, ty = kraken["target_tile"]
+            if now - kraken["last_destroy"] >= KRAKEN_DESTROY_DELAY:
+                if get_tile(tx, ty) in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
+                    set_tile(tx, ty, WATER)  # Destroy bridge
+                    explosions.append({"x": tx, "y": ty, "timer": 500})  # Visual feedback
+                kraken["state"] = "searching"
+                kraken["target_tile"] = None
 
 def update_npcs():
     global npcs
@@ -2171,6 +2280,7 @@ while running:
     update_land_spread()
     update_interaction_ui()
     update_pirates()
+    update_krakens()
     update_npcs()
     update_turrets()
     update_projectiles()
@@ -2184,6 +2294,7 @@ while running:
     t = game_time % 96
     if pirate_spawn_timer >= spawn_delay and ((t > 24 and t < 28) or (t >= 76 and t < 96)):
         spawn_pirate()
+        spawn_kraken()
         pirate_spawn_timer = 0
 
     for event in pygame.event.get():
