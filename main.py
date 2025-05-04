@@ -102,13 +102,13 @@ RARE_TYPE_COLORS = {
 }
 
 # --- Tile Types ---
-WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3 = range(11)
+WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, BOULDER = range(12)
 
 # Approved tiles for movement
-MOVEMENT_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TURRET)
+MOVEMENT_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TURRET, BOULDER)
 
 # Approved tiles for boat tile adjacency
-LAND_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TREE, TURRET)
+LAND_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TREE, TURRET, BOULDER)
 
 # --- Load Tile Images ---
 tile_images = {
@@ -125,7 +125,8 @@ tile_images = {
     LOOT: pygame.image.load("Assets/loot.png").convert_alpha(),
     BOAT_TILE_STAGE_2: pygame.image.load("Assets/boat_tile2.png").convert(),
     BOAT_TILE_STAGE_3: pygame.image.load("Assets/boat_tile3.png").convert(),
-    "WALL_TOP": pygame.image.load("Assets/wall_top.png").convert()
+    "WALL_TOP": pygame.image.load("Assets/wall_top.png").convert(),
+    BOULDER: pygame.image.load("Assets/boulder.png").convert_alpha()  # Add boulder image
 }
 
 water_frames = [
@@ -189,7 +190,7 @@ def chunk_to_world(cx, cy, tx, ty):
     return cx * CHUNK_SIZE + tx, cy * CHUNK_SIZE + ty
 
 def generate_chunk(cx, cy):
-    """Generate a new chunk with medium-sized land masses and occasional trees."""
+    """Generate a new chunk with medium-sized land masses, occasional trees, loot, and boulders."""
     chunk = [[WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
     total_tiles = CHUNK_SIZE * CHUNK_SIZE  # 256 tiles in a 16x16 chunk
     target_land_tiles = int(total_tiles * 0.1)  # 10% land = ~26 tiles per chunk
@@ -253,6 +254,13 @@ def generate_chunk(cx, cy):
         for tx in range(CHUNK_SIZE):
             if chunk[ty][tx] == LAND and random.random() < loot_chance:
                 chunk[ty][tx] = LOOT
+
+    # Add boulders to some land tiles (slightly rarer than loot)
+    boulder_chance = 0.03  # 3% chance for a boulder on each land tile
+    for ty in range(CHUNK_SIZE):
+        for tx in range(CHUNK_SIZE):
+            if chunk[ty][tx] == LAND and random.random() < boulder_chance:
+                chunk[ty][tx] = BOULDER
 
     return chunk
 
@@ -412,9 +420,14 @@ pirate_spawn_timer = 0
 spawn_delay = 3000
 pirate_walk_delay = 300
 
+wall_levels = {}
+wall_damage_timers = {}  # Track last time each wall was damaged
+
 npcs = []  # List to store NPCs
 waller_npc_spawned = False  # Flag to ensure NPC spawns only once
 wall_placement_mode = False  # Tracks if player is in wall placement mode
+boulder_placement_mode = False  # Tracks if player is in boulder placement mode
+picked_boulder_pos = None  # Stores the position of the picked-up boulder
 
 game_surface = pygame.Surface((WIDTH, HEIGHT))
 
@@ -514,7 +527,7 @@ def draw_grid():
                     if under_wood_image:
                         game_surface.blit(pygame.transform.scale(under_wood_image, (TILE_SIZE, TILE_SIZE)), under_rect)
 
-    # Third pass: Render overlay tiles and turret levels
+    # Third pass: Render overlay tiles and turret/wall levels
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
@@ -522,7 +535,7 @@ def draw_grid():
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-            if tile in [TURRET, TREE, SAPLING, LOOT, WALL]:
+            if tile in [TURRET, TREE, SAPLING, LOOT, WALL, BOULDER]:  # Added BOULDER
                 land_image = tile_images.get(LAND)
                 if land_image:
                     game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
@@ -535,6 +548,12 @@ def draw_grid():
                     game_surface.blit(pygame.transform.scale(overlay_image, (TILE_SIZE, TILE_SIZE)), rect)
             if tile == TURRET:
                 level = turret_levels.get((gx, gy), 1)
+                font = pygame.font.SysFont(None, 20)
+                level_text = font.render(str(level), True, WHITE)
+                text_rect = level_text.get_rect(center=(px + TILE_SIZE // 2, py - 10))
+                game_surface.blit(level_text, text_rect)
+            if tile == WALL:
+                level = wall_levels.get((gx, gy), 1)
                 font = pygame.font.SysFont(None, 20)
                 level_text = font.render(str(level), True, WHITE)
                 text_rect = level_text.get_rect(center=(px + TILE_SIZE // 2, py - 10))
@@ -683,6 +702,16 @@ def draw_grid():
             wall_surface = pygame.transform.scale(wall_image, (TILE_SIZE, TILE_SIZE))
             wall_surface.set_alpha(128)
             game_surface.blit(wall_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
+     # Render boulder placement preview
+    if boulder_placement_mode and selected_tile:
+        sel_x, sel_y = selected_tile
+        sel_px = sel_x - top_left_x
+        sel_py = sel_y - top_left_y
+        if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
+            boulder_image = tile_images[BOULDER]
+            boulder_surface = pygame.transform.scale(boulder_image, (TILE_SIZE, TILE_SIZE))
+            boulder_surface.set_alpha(128)  # Semi-transparent preview
+            game_surface.blit(boulder_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
     # Render floating text (wood and XP)
     for text in wood_texts:
@@ -836,7 +865,8 @@ def draw_minimap():
                                 USED_LAND: LIGHT_GRAY,
                                 LOOT: YELLOW,
                                 BOAT_TILE_STAGE_2: (180, 200, 140),
-                                BOAT_TILE_STAGE_3: (115, 220, 140)
+                                BOAT_TILE_STAGE_3: (115, 220, 140),
+                                BOULDER: (100, 100, 100)
                             }.get(tile, BLACK)
                             mx_map = (dx + VIEW_CHUNKS // 2) * CHUNK_SIZE + mx
                             my_map = (dy + VIEW_CHUNKS // 2) * CHUNK_SIZE + my
@@ -1349,6 +1379,19 @@ def update_pirates():
                             if turret_pos in turret_xp:
                                 del turret_xp[turret_pos]
                         moved = True
+                    elif get_tile(tx, ty) == WALL:
+                        wall_pos = (tx, ty)
+                        last_damaged = wall_damage_timers.get(wall_pos, 0)
+                        if now - last_damaged >= 1000:  # Damage every second
+                            current_level = wall_levels.get(wall_pos, 1)
+                            if current_level > 1:
+                                wall_levels[wall_pos] = current_level - 1
+                            else:
+                                set_tile(tx, ty, BOULDER)
+                                del wall_levels[wall_pos]
+                                if wall_pos in wall_damage_timers:
+                                    del wall_damage_timers[wall_pos]
+                            wall_damage_timers[wall_pos] = now
                     elif can_walk(tx, ty):
                         pirate["start_x"] = pirate["x"]
                         pirate["start_y"] = pirate["y"]
@@ -1380,6 +1423,19 @@ def update_pirates():
                                 if turret_pos in turret_xp:
                                     del turret_xp[turret_pos]
                             moved = True
+                        elif get_tile(ax, ay) == WALL:
+                            wall_pos = (ax, ay)
+                            last_damaged = wall_damage_timers.get(wall_pos, 0)
+                            if now - last_damaged >= 1000:  # Damage every second
+                                current_level = wall_levels.get(wall_pos, 1)
+                                if current_level > 1:
+                                    wall_levels[wall_pos] = current_level - 1
+                                else:
+                                    set_tile(ax, ay, BOULDER)
+                                    del wall_levels[wall_pos]
+                                    if wall_pos in wall_damage_timers:
+                                        del wall_damage_timers[wall_pos]
+                                wall_damage_timers[wall_pos] = now
                         elif can_walk(ax, ay):
                             pirate["start_x"] = pirate["x"]
                             pirate["start_y"] = pirate["y"]
@@ -1740,7 +1796,7 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, wall_placement_mode
+    global wood, tiles_placed, turrets_placed, wall_placement_mode, boulder_placement_mode, picked_boulder_pos
     if not selected_tile:
         return
     x, y = selected_tile
@@ -1759,13 +1815,32 @@ def interact(button):
                 interaction_ui["left_message"] = "Click a land tile to place a wall\n-100 Wood\nRight click to cancel"
                 interaction_ui["alpha"] = 255  # Show UI immediately
                 return
+        # Handle boulder placement
+        if boulder_placement_mode:
+            # Can only place on LAND or where the boulder was originally picked up
+            if (tile == LAND or (x, y) == picked_boulder_pos):
+                set_tile(x, y, BOULDER)
+                boulder_placement_mode = False
+                picked_boulder_pos = None
+                interaction_ui["left_message"] = ""
+                interaction_ui["alpha"] = 0
+            return
         # Handle wall placement
         if wall_placement_mode:
             if tile == LAND and wood >= 100:
                 set_tile(x, y, WALL)
                 wood -= 100
                 tiles_placed += 1
+                wall_levels[(x, y)] = 1  # Initialize wall at level 1
                 # Optionally keep mode active: wall_placement_mode = False
+            return
+        # Pick up boulder
+        if tile == BOULDER:
+            set_tile(x, y, LAND)  # Remove boulder from current position
+            boulder_placement_mode = True
+            picked_boulder_pos = (x, y)  # Store original position
+            interaction_ui["left_message"] = "Click a land tile to place the boulder\nRight click to cancel"
+            interaction_ui["alpha"] = 255
             return
         # Existing interactions
         if tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
@@ -1804,11 +1879,32 @@ def interact(button):
             plant_sapling()
     
     elif button == 3:  # Right-click
+        if boulder_placement_mode:
+            # Cancel boulder placement and return it to its original position
+            if picked_boulder_pos:
+                set_tile(picked_boulder_pos[0], picked_boulder_pos[1], BOULDER)
+            boulder_placement_mode = False
+            picked_boulder_pos = None
+            interaction_ui["left_message"] = ""
+            interaction_ui["alpha"] = 0
+            return
         if wall_placement_mode:
             wall_placement_mode = False
             interaction_ui["left_message"] = ""
             interaction_ui["alpha"] = 0
             return
+        # Convert boulder to wall or level up existing wall
+        if tile == BOULDER and wood >= 5:
+            set_tile(x, y, WALL)
+            wall_levels[(x, y)] = 1  # Start at level 1
+            wood -= 5
+            tiles_placed += 1
+        elif tile == WALL and wood >= 5:
+            current_level = wall_levels.get((x, y), 1)
+            wall_levels[(x, y)] = current_level + 1  # Increase level
+            wood -= 5
+            tiles_placed += 1
+        # Existing turret logic
         turret_pos = (x, y)
         if tile == TURRET:
             level = turret_levels.get(turret_pos, 1)
@@ -1868,6 +1964,12 @@ def update_interaction_ui():
     interaction_ui["left_message"] = ""
     interaction_ui["right_message"] = ""
 
+    # Show boulder placement message when in boulder placement mode
+    if boulder_placement_mode:
+        interaction_ui["left_message"] = "Click a land tile to place the boulder\nRight click to cancel"
+        interaction_ui["alpha"] = 255
+        return
+
     # Show wall placement message when hovering over NPC in wall placement mode
     if wall_placement_mode:
         for npc in npcs:
@@ -1876,7 +1978,18 @@ def update_interaction_ui():
                 interaction_ui["alpha"] = 255
                 return
 
-    if tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
+    # Show boulder pickup message
+    if tile == BOULDER:
+        interaction_ui["left_message"] = "Pick up Boulder"
+        if wood >= 5:
+            interaction_ui["right_message"] = "Convert to Wall\n-5 Wood\n(Level 1)"
+    elif tile == WALL:
+        level = wall_levels.get((x, y), 1)
+        if wood >= 5:
+            interaction_ui["right_message"] = f"Upgrade Wall\n-5 Wood\n(Level {level + 1})"
+    elif tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
+        interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood\n(Next to Boat/Land)"
+    elif tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
         interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood\n(Next to Boat/Land)"
     elif tile == LOOT:
         interaction_ui["left_message"] = "Collect\n+5-10 Wood"
