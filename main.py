@@ -386,6 +386,7 @@ pirates_killed = 0
 tiles_placed = 0
 
 game_over = False
+kraken_game_over = False
 fade_done = False
 player_pos = [0.0, 0.0]  # Now in world coordinates with floating-point precision
 wood = 5
@@ -995,9 +996,15 @@ def show_game_over():
     font = pygame.font.SysFont(None, 48)
     small_font = pygame.font.SysFont(None, 32)
 
+    # Change the game over message based on the cause
+    if kraken_game_over:
+        cause_message = "You were taken by the Kraken!"
+    else:
+        cause_message = "A pirate caught you!"
+
     lines = [
         "Game Over!",
-        "A pirate caught you!",
+        cause_message,
         f"Score: {score}",
         f"High Score: {high_score}",
         "",
@@ -1551,7 +1558,7 @@ def update_pirates():
             p["walk_timer"] = now
 
 def update_krakens():
-    global krakens
+    global krakens, game_over, pirates_killed, kraken_game_over  # Add kraken_game_over flag
     now = pygame.time.get_ticks()
     for kraken in krakens[:]:
         if not is_night(game_time):
@@ -1560,23 +1567,50 @@ def update_krakens():
         if kraken["state"] == "destroying":
             tx, ty = kraken["target_tile"]
             if now - kraken["last_destroy"] >= KRAKEN_DESTROY_DELAY:
+                # Check if the player is on the tile
+                player_tile_x, player_tile_y = int(player_pos[0] + 0.5), int(player_pos[1] + 0.5)
+                if (tx, ty) == (player_tile_x, player_tile_y):
+                    game_over = True
+                    kraken_game_over = True  # Flag to indicate Kraken caused the game over
+                    return  # Exit early since game is over
+
+                # Check for pirates on the tile
+                pirates_to_remove = []
+                for p in pirates[:]:
+                    for pirate in p.get("pirates", [])[:]:
+                        pirate_x, pirate_y = int(pirate["x"]), int(pirate["y"])
+                        if (pirate_x, pirate_y) == (tx, ty):
+                            # Remove the pirate and count it as killed
+                            p["pirates"].remove(pirate)
+                            pirates_killed += 1
+                            explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})  # Visual feedback
+                    # Update pirate group position or remove if no pirates left
+                    if not p["pirates"]:
+                        pirates_to_remove.append(p)
+                    else:
+                        avg_x = sum(pirate["x"] for pirate in p["pirates"]) / len(p["pirates"])
+                        avg_y = sum(pirate["y"] for pirate in p["pirates"]) / len(p["pirates"])
+                        p["x"], p["y"] = avg_x, avg_y
+                for p in pirates_to_remove:
+                    pirates.remove(p)
+
+                # Destroy the boat tile
                 if get_tile(tx, ty) in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
-                    set_tile(tx, ty, WATER)  # Destroy the boat tile
+                    set_tile(tx, ty, WATER)
                     explosions.append({"x": tx, "y": ty, "timer": 500})
+
                 # Look for an adjacent boat tile
                 boat_tiles = []
-                for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:  # Check cardinal directions
+                for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                     nx, ny = int(kraken["x"]) + dx, int(kraken["y"]) + dy
                     if get_tile(nx, ny) in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
                         boat_tiles.append((nx, ny))
                 if boat_tiles:
-                    # Move to a random adjacent boat tile
                     target_x, target_y = random.choice(boat_tiles)
                     kraken["target_tile"] = (target_x, target_y)
                     kraken["state"] = "moving"
-                    kraken["despawn_timer"] = 0  # Reset despawn timer
+                    kraken["despawn_timer"] = 0
                 else:
-                    # No boat tile found, start despawn timer
                     kraken["state"] = "waiting"
                     kraken["despawn_timer"] = now
         elif kraken["state"] == "moving":
@@ -1592,7 +1626,6 @@ def update_krakens():
                 kraken["last_destroy"] = now
         elif kraken["state"] == "waiting":
             if now - kraken["despawn_timer"] >= KRAKEN_DESPAWN_DELAY:
-                explosions.append({"x": kraken["x"], "y": kraken["y"], "timer": 500})  # Splash effect
                 krakens.remove(kraken)
 
 def update_npcs():
