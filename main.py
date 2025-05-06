@@ -201,12 +201,12 @@ def chunk_to_world(cx, cy, tx, ty):
     return cx * CHUNK_SIZE + tx, cy * CHUNK_SIZE + ty
 
 def generate_chunk(cx, cy):
-    """Generate a new chunk with medium-sized land masses, occasional trees, loot, and boulders."""
+    """Generate a new chunk with rarer, larger land masses, occasional trees, loot, and boulders."""
     chunk = [[WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
     total_tiles = CHUNK_SIZE * CHUNK_SIZE  # 256 tiles in a 16x16 chunk
-    target_land_tiles = int(total_tiles * 0.1)  # 10% land = ~26 tiles per chunk
-    min_mass_size = 5
-    max_mass_size = 15
+    target_land_tiles = int(total_tiles * 0.05)  # 5% land = ~13 tiles per chunk
+    min_mass_size = 8  # Increased from 5
+    max_mass_size = 20  # Increased from 15
     land_tiles_placed = 0
 
     # Keep generating land masses until we reach the target number of land tiles
