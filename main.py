@@ -320,14 +320,53 @@ def set_tile(x, y, tile_type):
 
 # --- Initialize Starting Area ---
 def initialize_starting_area():
-    """Set up the initial 5x5 chunk area around (0, 0) with a land patch."""
-    for cx in range(-2, 3):  # Changed from -1, 2 to match VIEW_CHUNKS = 5
+    """Set up the initial 5x5 chunk area around (0, 0) with a varied, organic land patch."""
+    # Generate surrounding chunks
+    for cx in range(-2, 3):  # 5x5 chunk grid
         for cy in range(-2, 3):
             chunks[(cx, cy)] = generate_chunk(cx, cy)
-    # Ensure a 3x3 land area at the origin
-    for y in range(-1, 2):
-        for x in range(-1, 2):
-            set_tile(x, y, LAND)
+    
+    # Create a varied land mass centered at (0, 0)
+    target_land_tiles = random.randint(10, 16)  # 10–16 tiles for more variety
+    land_mass = set()
+    frontier = [(0, 0)]  # Start at origin
+    land_mass.add((0, 0))
+    set_tile(0, 0, LAND)  # Ensure origin is land
+    
+    # Flood-fill to create an organic land mass
+    while len(land_mass) < target_land_tiles and frontier:
+        cx, cy = frontier.pop(0)
+        # Check cardinal and diagonal neighbors for more varied shapes
+        neighbors = [
+            (cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1),  # Cardinal
+            (cx+1, cy+1), (cx+1, cy-1), (cx-1, cy+1), (cx-1, cy-1)  # Diagonal
+        ]
+        random.shuffle(neighbors)  # Randomize for natural shapes
+        for nx, ny in neighbors:
+            if len(land_mass) >= target_land_tiles:
+                break
+            # Constrain to a 5x5 area (-2 to 2) for more shape variety
+            if (abs(nx) <= 2 and abs(ny) <= 2 and
+                    (nx, ny) not in land_mass and
+                    get_tile(nx, ny) == WATER):
+                # Add some randomness to skip tiles for irregularity
+                if random.random() < 0.8:  # 80% chance to place land
+                    set_tile(nx, ny, LAND)
+                    land_mass.add((nx, ny))
+                    frontier.append((nx, ny))
+    
+    # Add features to make the starting area interesting
+    land_tiles = list(land_mass)
+    features_to_add = random.randint(1, 3)  # Add 1–3 features
+    random.shuffle(land_tiles)
+    for i in range(min(features_to_add, len(land_tiles))):
+        tx, ty = land_tiles[i]
+        feature = random.choices(
+            [TREE, LOOT, BOULDER],
+            weights=[0.6, 0.3, 0.1],  # 60% tree, 30% loot, 10% boulder
+            k=1
+        )[0]
+        set_tile(tx, ty, feature)
 
 def load_chunk(cx, cy):
     filename = f"{CHUNK_DIR}/chunk_{cx}_{cy}.pkl"
