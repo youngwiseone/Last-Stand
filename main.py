@@ -102,7 +102,7 @@ RARE_TYPE_COLORS = {
 }
 
 # --- Tile Types ---
-WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, BOULDER = range(12)
+WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, BOULDER, FISH = range(13)
 
 # Approved tiles for movement
 MOVEMENT_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TURRET, BOULDER)
@@ -128,6 +128,18 @@ tile_images = {
     "WALL_TOP": pygame.image.load("Assets/wall_top.png").convert(),
     BOULDER: pygame.image.load("Assets/boulder.png").convert_alpha()  # Add boulder image
 }
+
+# Load fishing-related images
+tile_images.update({
+    "FISHING_ROD": pygame.image.load("Assets/fishing_rod.png").convert_alpha(),
+    "FISH": pygame.image.load("Assets/fish.png").convert_alpha(),
+    "BOBBER": pygame.image.load("Assets/bobber.png").convert_alpha(),
+    "BOBBER2": pygame.image.load("Assets/bobber2.png").convert_alpha(),
+    "BOBBER3": pygame.image.load("Assets/bobber3.png").convert_alpha()
+})
+tile_images[FISH] = tile_images["FISH"]
+
+player_fishing_image = pygame.image.load("Assets/player_fishing.png").convert_alpha()
 
 tile_images.update({
     "KRAKEN": pygame.transform.scale(pygame.image.load("Assets/kraken.png").convert_alpha(), (TILE_SIZE, TILE_SIZE))
@@ -435,6 +447,17 @@ player_move_delay = 150
 facing = [0, -1]
 interaction_ui_enabled = False
 
+has_fishing_rod = False  # Tracks if player has the fishing rod
+fish_tiles = []  # List of active fish tiles: {"x": x, "y": y, "spawn_time": time}
+fish_caught = 0  # Total fish caught by player
+fishing_state = None  # None, "casting", or "fishing"
+bobber = None  # Bobber state: {"x": x, "y": y, "target_x": x, "target_y": y, "state": "moving"/"waiting"/"biting", "bite_timer": time, "last_switch": time}
+max_fish_tiles = 3  # Maximum fish tiles at a time
+fish_despawn_time = 60000  # 1 minute in milliseconds
+bobber_speed = 0.1  # Speed of bobber movement (tiles per frame)
+bite_interval = random.uniform(2000, 5000)  # Random interval for fish bites (2–5 seconds)
+bite_duration = 1000  # Duration of a fish bite (1 second)
+
 last_player_pos = list(player_pos)
 stationary_timer = 0
 STATIONARY_DELAY = 500
@@ -547,6 +570,7 @@ def draw_grid():
                 brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], 0.33)
 
     # First pass: Render base tiles without darkness
+    now = pygame.time.get_ticks()
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
@@ -554,11 +578,26 @@ def draw_grid():
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-            image = tile_images.get(tile)
-            if image:
-                game_surface.blit(pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE)), rect)
+            if tile == FISH:
+                # Render water tile first
+                water_image = tile_images[WATER]
+                game_surface.blit(pygame.transform.scale(water_image, (TILE_SIZE, TILE_SIZE)), rect)
+                # Render fish image with fade-out
+                fish_image = tile_images[FISH]
+                scaled_fish = pygame.transform.scale(fish_image, (TILE_SIZE, TILE_SIZE))
+                fish_data = next((f for f in fish_tiles if f["x"] == gx and f["y"] == gy), None)
+                if fish_data:
+                    time_left = fish_despawn_time - (now - fish_data["spawn_time"])
+                    alpha = 255 if time_left > 5000 else int(255 * (time_left / 5000))
+                    scaled_fish.set_alpha(alpha)
+                game_surface.blit(scaled_fish, rect)
             else:
-                pygame.draw.rect(game_surface, BLACK, rect)
+                image = tile_images.get(tile)
+                if image:
+                    scaled_image = pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE))
+                    game_surface.blit(scaled_image, rect)
+                else:
+                    pygame.draw.rect(game_surface, BLACK, rect)
 
     # Second pass: Render underlay tiles without darkness
     for y in range(VIEW_HEIGHT):
@@ -651,6 +690,24 @@ def draw_grid():
     py = player_pos[1] - top_left_y
     if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
         game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
+
+    # Render player (switch sprite if fishing)
+    px = player_pos[0] - top_left_x
+    py = player_pos[1] - top_left_y
+    if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+        current_player_image = player_fishing_image if fishing_state else player_image
+        game_surface.blit(pygame.transform.scale(current_player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
+
+    # Render bobber
+    if bobber:
+        bx = bobber["x"] - top_left_x
+        by = bobber["y"] - top_left_y
+        if 0 <= bx < VIEW_WIDTH and 0 <= by < VIEW_HEIGHT:
+            bobber_image = tile_images["BOBBER"]
+            if bobber["state"] in ["waiting", "biting"]:
+                bobber_image = tile_images["BOBBER2"] if bobber["state"] == "waiting" or (now - bobber["last_switch"] < 500) else tile_images["BOBBER3"]
+            scaled_bobber = pygame.transform.scale(bobber_image, (TILE_SIZE, TILE_SIZE))
+            game_surface.blit(scaled_bobber, (bx * TILE_SIZE, by * TILE_SIZE))
 
     # Render interaction UI
     draw_interaction_ui()
@@ -779,16 +836,22 @@ def draw_grid():
             boulder_surface.set_alpha(128)  # Semi-transparent preview
             game_surface.blit(boulder_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
-    # Render floating text (wood and XP)
+    # Render floating text and images (wood and XP)
     for text in wood_texts:
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            font = pygame.font.SysFont(None, 14)
-            text_surface = font.render(text["text"], True, WHITE)
-            text_surface.set_alpha(text["alpha"])
-            text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
-            game_surface.blit(text_surface, text_rect)
+            if text.get("image"):
+                image = text["image"]
+                scaled_image = pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE))
+                scaled_image.set_alpha(text["alpha"])
+                game_surface.blit(scaled_image, (px * TILE_SIZE, py * TILE_SIZE - 10))
+            else:
+                font = pygame.font.SysFont(None, 14)
+                text_surface = font.render(text["text"], True, WHITE)
+                text_surface.set_alpha(text["alpha"])
+                text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
+                game_surface.blit(text_surface, text_rect)
     for text in xp_texts:
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
@@ -1172,6 +1235,44 @@ def update_land_spread():
             elif new_stage == 3:
                 set_tile(gx, gy, LAND)
                 del land_spread[pos]  # Conversion complete
+
+def spawn_fish_tiles():
+    """Spawn FISH tiles within draw distance, up to a maximum of 3."""
+    now = pygame.time.get_ticks()
+    # Count current FISH tiles in view
+    top_left_x = int(player_pos[0] - VIEW_WIDTH // 2)
+    top_left_y = int(player_pos[1] - VIEW_HEIGHT // 2)
+    fish_count = 0
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            gx, gy = top_left_x + x, top_left_y + y
+            if get_tile(gx, gy) == FISH:
+                fish_count += 1
+    if fish_count >= max_fish_tiles:
+        return
+    # Find water tiles
+    water_tiles = []
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            gx, gy = top_left_x + x, top_left_y + y
+            if get_tile(gx, gy) == WATER:
+                water_tiles.append((gx, gy))
+    # Spawn a fish with 1% chance per frame
+    if water_tiles and random.random() < 0.01:
+        x, y = random.choice(water_tiles)
+        set_tile(x, y, FISH)
+        fish_tiles.append({"x": x, "y": y, "spawn_time": now})
+
+def update_fish_tiles():
+    """Despawn FISH tiles after 1 minute and revert to WATER."""
+    global fish_tiles
+    now = pygame.time.get_ticks()
+    fish_tiles = [fish for fish in fish_tiles if now - fish["spawn_time"] < fish_despawn_time]
+    # Revert expired fish tiles to WATER
+    for fish in fish_tiles[:]:
+        if now - fish["spawn_time"] >= fish_despawn_time:
+            if get_tile(fish["x"], fish["y"]) == FISH:
+                set_tile(fish["x"], fish["y"], WATER)
 
 def spawn_pirate():
     global pirates
@@ -1903,6 +2004,54 @@ def update_projectiles():
 
     pirates[:] = [p for p in pirates if id(p) not in pirates_to_remove]
 
+def update_fishing():
+    global fishing_state, bobber, fish_tiles, wood, fish_caught
+    if not fishing_state:
+        return
+    
+    now = pygame.time.get_ticks()
+    
+    # Cancel fishing if player moves
+    if any(pygame.key.get_pressed()[k] for k in [pygame.K_w, pygame.K_s, pygame.K_a, pygame.K_d]):
+        fishing_state = None
+        bobber = None
+        return
+    
+    # Update bobber
+    if bobber["state"] == "moving":
+        dx = bobber["target_x"] - bobber["x"]
+        dy = bobber["target_y"] - bobber["y"]
+        dist = math.hypot(dx, dy)
+        if dist < bobber_speed:
+            bobber["x"] = bobber["target_x"]
+            bobber["y"] = bobber["target_y"]
+            bobber["state"] = "waiting"
+            bobber["bite_timer"] = now + random.uniform(2000, 5000)  # Next bite in 2–5s
+            bobber["last_switch"] = now
+            fishing_state = "fishing"  # Transition to fishing state
+        else:
+            bobber["x"] += (dx / dist) * bobber_speed
+            bobber["y"] += (dy / dist) * bobber_speed
+    elif bobber["state"] == "waiting":
+        if now >= bobber["bite_timer"]:
+            bobber["state"] = "biting"
+            bobber["bite_timer"] = now + bite_duration
+            bobber["last_switch"] = now
+    elif bobber["state"] == "biting":
+        # Switch between bobber2.png and bobber3.png every 500ms
+        if now - bobber["last_switch"] >= 500:
+            bobber["last_switch"] = now
+        if now >= bobber["bite_timer"]:
+            bobber["state"] = "waiting"
+            bobber["bite_timer"] = now + random.uniform(2000, 5000)
+            bobber["last_switch"] = now
+    
+    # Check if fish tile despawned
+    fish_tile = next((fish for fish in fish_tiles if fish["x"] == bobber["target_x"] - 0.5 and fish["y"] == bobber["target_y"] - 0.5), None)
+    if not fish_tile or now - fish_tile["spawn_time"] >= fish_despawn_time or get_tile(fish_tile["x"], fish_tile["y"]) != FISH:
+        fishing_state = None
+        bobber = None
+
 def draw_interaction_ui():
     if not interaction_ui["left_message"] and not interaction_ui["right_message"]:
         return
@@ -1966,10 +2115,10 @@ def update_wood_texts():
         if text["timer"] <= 0:
             wood_texts.remove(text)
             continue
-        # Move text upward
-        text["y"] -= 0.02  # Adjust speed as needed
+        # Move text/image upward
+        text["y"] -= 0.02
         # Fade out
-        text["alpha"] = int((text["timer"] / 1000) * 255)  # Fade over 1 second
+        text["alpha"] = int((text["timer"] / 1000) * 255)
         text["alpha"] = max(0, min(255, text["alpha"]))
 
 def update_xp_texts():
@@ -1992,7 +2141,7 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, wall_placement_mode, boulder_placement_mode, picked_boulder_pos
+    global wood, tiles_placed, turrets_placed, wall_placement_mode, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught
     if not selected_tile:
         return
     x, y = selected_tile
@@ -2007,10 +2156,53 @@ def interact(button):
         # Check if clicking the NPC
         for npc in npcs:
             if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
-                wall_placement_mode = True
-                interaction_ui["left_message"] = "Click a land tile to place a wall\n-100 Wood\nRight click to cancel"
-                interaction_ui["alpha"] = 255  # Show UI immediately
+                if not has_fishing_rod and wood >= 10:
+                    has_fishing_rod = True
+                    wood -= 10
+                    # Show fishing rod icon above player
+                    wood_texts.append({
+                        "x": player_pos[0],
+                        "y": player_pos[1] - 0.5,
+                        "text": "",  # Empty text, using image instead
+                        "image": tile_images["FISHING_ROD"],
+                        "timer": 1000,
+                        "alpha": 255
+                    })
+                # Show fish caught count in UI
+                interaction_ui["left_message"] = f"Fish Caught: {fish_caught}"
+                interaction_ui["alpha"] = 255
                 return
+        # Interact with fish tile
+        if tile == FISH and has_fishing_rod:
+            fish_data = next((f for f in fish_tiles if f["x"] == x and f["y"] == y), None)
+            if fish_data:
+                if fishing_state == "fishing" and bobber and bobber["state"] == "biting" and bobber["target_x"] == x + 0.5 and bobber["target_y"] == y + 0.5:
+                    # Catch fish
+                    wood_gained = random.randint(5, 10)
+                    wood += wood_gained
+                    fish_caught += 1
+                    wood_texts.append({
+                        "x": x,
+                        "y": y,
+                        "text": f"+{wood_gained} Wood",
+                        "timer": 1000,
+                        "alpha": 255
+                    })
+                    fishing_state = None
+                    bobber = None
+                elif not fishing_state:
+                    # Start fishing
+                    fishing_state = "casting"
+                    bobber = {
+                        "x": player_pos[0] + 0.5,
+                        "y": player_pos[1] + 0.5,
+                        "target_x": x + 0.5,
+                        "target_y": y + 0.5,
+                        "state": "moving",
+                        "bite_timer": 0,
+                        "last_switch": 0
+                    }
+            return
         # Handle boulder placement
         if boulder_placement_mode:
             # Can only place on LAND or where the boulder was originally picked up
@@ -2075,6 +2267,11 @@ def interact(button):
             plant_sapling()
     
     elif button == 3:  # Right-click
+        # Cancel fishing
+        if fishing_state:
+            fishing_state = None
+            bobber = None
+            return
         if boulder_placement_mode:
             # Cancel boulder placement and return it to its original position
             if picked_boulder_pos:
@@ -2123,7 +2320,7 @@ def interact(button):
             sound_place_turret.play()
 
 def update_interaction_ui():
-    global interaction_ui, stationary_timer, last_player_pos
+    global interaction_ui, stationary_timer, last_player_pos, has_fishing_rod
     if not interaction_ui_enabled:
         interaction_ui["alpha"] = 0
         interaction_ui["offset"] = 20
@@ -2166,16 +2363,22 @@ def update_interaction_ui():
         interaction_ui["alpha"] = 255
         return
 
-    # Show wall placement message when hovering over NPC in wall placement mode
-    if wall_placement_mode:
-        for npc in npcs:
-            if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
-                interaction_ui["left_message"] = "Click a land tile to place a wall\n-100 Wood\nRight click to cancel"
-                interaction_ui["alpha"] = 255
-                return
-
+    # Show NPC interaction message
+    for npc in npcs:
+        if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
+            if not has_fishing_rod and wood >= 100:
+                interaction_ui["left_message"] = "Get Fishing Rod\n-100 Wood"
+            else:
+                interaction_ui["left_message"] = f"Fish Caught: {fish_caught}"
+            interaction_ui["alpha"] = 255
+            return
+        
+    # Show fish tile interaction
+    if tile == FISH and has_fishing_rod:
+        interaction_ui["left_message"] = "Fish for Wood\n(Left Click)"
+        interaction_ui["alpha"] = 255
     # Show boulder pickup message
-    if tile == BOULDER:
+    elif tile == BOULDER:
         interaction_ui["left_message"] = "Pick up Boulder"
         if wood >= 5:
             interaction_ui["right_message"] = "Convert to Wall\n-5 Wood\n(Level 1)"
@@ -2183,8 +2386,6 @@ def update_interaction_ui():
         level = wall_levels.get((x, y), 1)
         if wood >= 5:
             interaction_ui["right_message"] = f"Upgrade Wall\n-5 Wood\n(Level {level + 1})"
-    elif tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
-        interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood\n(Next to Boat/Land)"
     elif tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
         interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood\n(Next to Boat/Land)"
     elif tile == LOOT:
@@ -2234,6 +2435,8 @@ def update_trees():
 
 def update_player_movement():
     global player_pos, facing, player_chunk
+    if fishing_state:
+        return  # Prevent movement while fishing
     keys = pygame.key.get_pressed()
     base_speed = 0.15  # Base movement speed (pixels per frame at SCALE = 2)
     speed = base_speed * get_speed_multiplier()  # Adjust speed based on scale
@@ -2371,9 +2574,12 @@ while running:
     update_npcs()
     update_turrets()
     update_projectiles()
+    spawn_fish_tiles()
+    update_fish_tiles()
+    update_fishing()
     
 
-    if wood >= 100 and not waller_npc_spawned:
+    if wood >= 10 and not waller_npc_spawned:
         spawn_waller_npc()
         waller_npc_spawned = True
 
