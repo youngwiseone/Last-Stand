@@ -1191,7 +1191,7 @@ def spawn_pirate():
             max_health *= 2  # Double health for Tanky
         xp_value = 2 ** (level - 1) * (2 if is_rare else 1)  # Double XP for rare
         move_duration = 300 if not (is_rare and rare_type == "speedy") else 150  # Half duration for Speedy
-        pirates_data.append({
+        pirate_data = {
             "x": float(px),
             "y": float(py),
             "start_x": float(px),
@@ -1207,7 +1207,10 @@ def spawn_pirate():
             "is_rare": is_rare,
             "rare_type": rare_type,
             "has_dropped_hat": False
-        })
+        }
+        if is_rare and rare_type == "bridge_builder":
+            pirate_data["boat_tiles_placed"] = 0  # Initialize counter for bridge_builder
+        pirates_data.append(pirate_data)
 
     dx = player_pos[0] - x
     dy = player_pos[1] - y
@@ -1439,8 +1442,9 @@ def update_pirates():
                     moved = False
                     tx, ty = int(pirate["x"] + primary[0]), int(pirate["y"] + primary[1])
                     if is_rare and rare_type == "bridge_builder" and get_tile(tx, ty) == WATER:
-                        if has_adjacent_boat_or_land(tx, ty):
+                        if has_adjacent_boat_or_land(tx, ty) and pirate.get("boat_tiles_placed", 0) < pirate["level"]:
                             set_tile(tx, ty, BOAT_TILE)
+                            pirate["boat_tiles_placed"] = pirate.get("boat_tiles_placed", 0) + 1
                     if is_rare and rare_type == "turret_breaker" and get_tile(tx, ty) == TURRET:
                         turret_pos = (tx, ty)
                         current_level = turret_levels.get(turret_pos, 1)
@@ -1483,8 +1487,9 @@ def update_pirates():
                     else:
                         ax, ay = int(pirate["x"] + alt[0]), int(pirate["y"] + alt[1])
                         if is_rare and rare_type == "bridge_builder" and get_tile(ax, ay) == WATER:
-                            if has_adjacent_boat_or_land(ax, ay):
+                            if has_adjacent_boat_or_land(ax, ay) and pirate.get("boat_tiles_placed", 0) < pirate["level"]:
                                 set_tile(ax, ay, BOAT_TILE)
+                                pirate["boat_tiles_placed"] = pirate.get("boat_tiles_placed", 0) + 1
                         if is_rare and rare_type == "turret_breaker" and get_tile(ax, ay) == TURRET:
                             turret_pos = (ax, ay)
                             current_level = turret_levels.get(turret_pos, 1)
