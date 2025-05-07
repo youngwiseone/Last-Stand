@@ -5,7 +5,6 @@ import math
 import os
 import subprocess
 import pickle
-import shutil
 import math
 
 # --- Init ---
@@ -126,24 +125,16 @@ tile_images = {
     BOAT_TILE_STAGE_2: pygame.image.load("Assets/boat_tile2.png").convert(),
     BOAT_TILE_STAGE_3: pygame.image.load("Assets/boat_tile3.png").convert(),
     "WALL_TOP": pygame.image.load("Assets/wall_top.png").convert(),
-    BOULDER: pygame.image.load("Assets/boulder.png").convert_alpha()  # Add boulder image
-}
-
-# Load fishing-related images
-tile_images.update({
+    BOULDER: pygame.image.load("Assets/boulder.png").convert_alpha(),
     "FISHING_ROD": pygame.image.load("Assets/fishing_rod.png").convert_alpha(),
-    "FISH": pygame.image.load("Assets/fish.png").convert_alpha(),
+    FISH: pygame.image.load("Assets/fish.png").convert_alpha(),
     "BOBBER": pygame.image.load("Assets/bobber.png").convert_alpha(),
     "BOBBER2": pygame.image.load("Assets/bobber2.png").convert_alpha(),
-    "BOBBER3": pygame.image.load("Assets/bobber3.png").convert_alpha()
-})
-tile_images[FISH] = tile_images["FISH"]
+    "BOBBER3": pygame.image.load("Assets/bobber3.png").convert_alpha(),
+    "KRAKEN": pygame.transform.scale(pygame.image.load("Assets/kraken.png").convert_alpha(), (TILE_SIZE, TILE_SIZE))
+}
 
 player_fishing_image = pygame.image.load("Assets/player_fishing.png").convert_alpha()
-
-tile_images.update({
-    "KRAKEN": pygame.transform.scale(pygame.image.load("Assets/kraken.png").convert_alpha(), (TILE_SIZE, TILE_SIZE))
-})
 
 # Kraken-specific constants
 KRAKEN_SPAWN_CHANCE = 0.50  # 10% chance per night spawn cycle
@@ -162,6 +153,8 @@ water_frame_timer = 0
 water_frame_delay = 1200
 
 player_image = pygame.image.load("Assets/player.png").convert_alpha()
+
+# Load pirate sprites
 # Load base pirate (hatless) and level-specific pirates and hats
 pirate_sprites = {
     "base": pygame.image.load("Assets/pirate/pirate.png").convert_alpha()
