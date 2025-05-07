@@ -704,8 +704,14 @@ def draw_grid():
         by = bobber["y"] - top_left_y
         if 0 <= bx < VIEW_WIDTH and 0 <= by < VIEW_HEIGHT:
             bobber_image = tile_images["BOBBER"]
-            if bobber["state"] in ["waiting", "biting"]:
-                bobber_image = tile_images["BOBBER2"] if bobber["state"] == "waiting" or (now - bobber["last_switch"] < 500) else tile_images["BOBBER3"]
+            if bobber["state"] == "waiting":
+                bobber_image = tile_images["BOBBER2"]
+            elif bobber["state"] == "biting":
+                now = pygame.time.get_ticks()
+                if (now - bobber["last_switch"]) % 1000 < 500:  # Switch every 500ms
+                    bobber_image = tile_images["BOBBER2"]
+                else:
+                    bobber_image = tile_images["BOBBER3"]
             scaled_bobber = pygame.transform.scale(bobber_image, (TILE_SIZE, TILE_SIZE))
             game_surface.blit(scaled_bobber, (bx * TILE_SIZE, by * TILE_SIZE))
 
@@ -1267,12 +1273,15 @@ def update_fish_tiles():
     """Despawn FISH tiles after 1 minute and revert to WATER."""
     global fish_tiles
     now = pygame.time.get_ticks()
+    # Identify expired fish tiles
+    expired_fish = [fish for fish in fish_tiles if now - fish["spawn_time"] >= fish_despawn_time]
+    # Keep only active fish tiles
     fish_tiles = [fish for fish in fish_tiles if now - fish["spawn_time"] < fish_despawn_time]
     # Revert expired fish tiles to WATER
-    for fish in fish_tiles[:]:
-        if now - fish["spawn_time"] >= fish_despawn_time:
-            if get_tile(fish["x"], fish["y"]) == FISH:
-                set_tile(fish["x"], fish["y"], WATER)
+    for fish in expired_fish:
+        x, y = fish["x"], fish["y"]
+        if get_tile(x, y) == FISH:  # Ensure it’s still a FISH tile
+            set_tile(x, y, WATER)
 
 def spawn_pirate():
     global pirates
@@ -1777,6 +1786,9 @@ def update_npcs():
     global npcs
     now = pygame.time.get_ticks()
     for npc in npcs[:]:
+        # Check if NPC is in cooldown
+        if "interaction_cooldown" in npc and now < npc["interaction_cooldown"]:
+            continue  # Skip movement during cooldown
         if npc["state"] == "boat":
             if not npc["ship"]:
                 npcs.remove(npc)
@@ -1814,12 +1826,12 @@ def update_npcs():
             # Roaming logic
             if npc["move_progress"] < 1.0:
                 elapsed = clock.get_time()
-                npc["move_progress"] = min(1.0, npc["move_progress"] + elapsed / 300)  # 300ms move duration
+                npc["move_progress"] = min(1.0, npc["move_progress"] + elapsed / 300)
                 npc["x"] = npc["start_x"] + (npc["target_x"] - npc["start_x"]) * npc["move_progress"]
                 npc["y"] = npc["start_y"] + (npc["target_y"] - npc["start_y"]) * npc["move_progress"]
                 npc["ship"][0]["x"] = npc["x"]
                 npc["ship"][0]["y"] = npc["y"]
-            if now - npc["roam_timer"] >= 1000 and npc["move_progress"] >= 1.0:  # Move every 1 second
+            if now - npc["roam_timer"] >= 1000 and npc["move_progress"] >= 1.0:
                 neighbors = [(0, 1), (0, -1), (1, 0), (-1, 0)]
                 random.shuffle(neighbors)
                 for dx, dy in neighbors:
@@ -2156,21 +2168,36 @@ def interact(button):
         # Check if clicking the NPC
         for npc in npcs:
             if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
-                if not has_fishing_rod and wood >= 10:
+                # Capture NPC's position at interaction
+                interaction_pos_x, interaction_pos_y = npc["x"], npc["y"]
+                if not has_fishing_rod and wood >= 50:
                     has_fishing_rod = True
-                    wood -= 10
-                    # Show fishing rod icon above player
+                    wood -= 50
                     wood_texts.append({
-                        "x": player_pos[0],
-                        "y": player_pos[1] - 0.5,
+                        "x": interaction_pos_x,
+                        "y": interaction_pos_y - 0.5,
+                        "text": "-10 Wood",
+                        "timer": 1000,
+                        "alpha": 255
+                    })
+                    wood_texts.append({
+                        "x": interaction_pos_x,
+                        "y": interaction_pos_y - 0.5,
                         "text": "",  # Empty text, using image instead
                         "image": tile_images["FISHING_ROD"],
                         "timer": 1000,
                         "alpha": 255
                     })
-                # Show fish caught count in UI
-                interaction_ui["left_message"] = f"Fish Caught: {fish_caught}"
-                interaction_ui["alpha"] = 255
+                else:
+                    wood_texts.append({
+                        "x": interaction_pos_x,
+                        "y": interaction_pos_y - 0.5,
+                        "text": f"Fish Caught: {fish_caught}",
+                        "timer": 1000,
+                        "alpha": 255
+                    })
+                # Add interaction cooldown to pause NPC movement
+                npc["interaction_cooldown"] = pygame.time.get_ticks() + 3000  # 3 seconds
                 return
         # Interact with fish tile
         if tile == FISH and has_fishing_rod:
@@ -2366,11 +2393,32 @@ def update_interaction_ui():
     # Show NPC interaction message
     for npc in npcs:
         if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
-            if not has_fishing_rod and wood >= 100:
-                interaction_ui["left_message"] = "Get Fishing Rod\n-100 Wood"
+            if not has_fishing_rod and wood >= 50:
+                has_fishing_rod = True
+                wood -= 50
+                wood_texts.append({
+                    "x": player_pos[0],
+                    "y": player_pos[1] - 0.5,
+                    "text": "-10 Wood",
+                    "timer": 1000,
+                    "alpha": 255
+                })
+                wood_texts.append({
+                    "x": player_pos[0],
+                    "y": player_pos[1] - 0.5,
+                    "text": "",  # Empty text, using image instead
+                    "image": tile_images["FISHING_ROD"],
+                    "timer": 1000,
+                    "alpha": 255
+                })
             else:
-                interaction_ui["left_message"] = f"Fish Caught: {fish_caught}"
-            interaction_ui["alpha"] = 255
+                wood_texts.append({
+                    "x": player_pos[0],
+                    "y": player_pos[1] - 0.5,
+                    "text": f"Fish Caught: {fish_caught}",
+                    "timer": 1000,
+                    "alpha": 255
+                })
             return
         
     # Show fish tile interaction
@@ -2579,7 +2627,7 @@ while running:
     update_fishing()
     
 
-    if wood >= 10 and not waller_npc_spawned:
+    if wood >= 50 and not waller_npc_spawned:
         spawn_waller_npc()
         waller_npc_spawned = True
 
