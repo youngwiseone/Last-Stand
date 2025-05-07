@@ -880,7 +880,7 @@ def draw_grid():
 
     # Render explosions
     for explosion in explosions[:]:
-        explosion["timer"] -= clock.get_time()
+        explosion["timer"] -= dt
         if explosion["timer"] <= 0:
             explosions.remove(explosion)
             continue
@@ -1515,7 +1515,7 @@ def update_pirates():
                 p["walk_timer"] = 0
             for pirate in p["pirates"]:
                 if pirate["move_progress"] < 1.0:
-                    elapsed = clock.get_time()
+                    elapsed = dt
                     pirate["move_progress"] = min(1.0, pirate["move_progress"] + elapsed / pirate["move_duration"])
                     pirate["x"] = pirate["start_x"] + (pirate["target_x"] - pirate["start_x"]) * pirate["move_progress"]
                     pirate["y"] = pirate["start_y"] + (pirate["target_y"] - pirate["start_y"]) * pirate["move_progress"]
@@ -1536,7 +1536,7 @@ def update_pirates():
                         pirate["last_count_update"] = now
                         print(f"Fuse started for Explosive pirate at ({pirate['x']}, {pirate['y']})")
                     if "fuse_timer" in pirate:
-                        pirate["fuse_timer"] += clock.get_time()
+                        pirate["fuse_timer"] += dt
                         if now - pirate["last_count_update"] >= 1000 and pirate["fuse_count"] > 0:
                             pirate["fuse_count"] -= 1
                             pirate["last_count_update"] = now
@@ -1818,7 +1818,7 @@ def update_npcs():
         elif npc["state"] == "docked":
             # Roaming logic
             if npc["move_progress"] < 1.0:
-                elapsed = clock.get_time()
+                elapsed = dt
                 npc["move_progress"] = min(1.0, npc["move_progress"] + elapsed / 300)
                 npc["x"] = npc["start_x"] + (npc["target_x"] - npc["start_x"]) * npc["move_progress"]
                 npc["y"] = npc["start_y"] + (npc["target_y"] - npc["start_y"]) * npc["move_progress"]
@@ -1875,7 +1875,7 @@ def update_turrets():
 
 def update_sparks():
     for spark in sparks[:]:
-        spark["timer"] -= clock.get_time()
+        spark["timer"] -= dt  
         if spark["timer"] <= 0:
             sparks.remove(spark)
             continue
@@ -2105,7 +2105,7 @@ def draw_interaction_ui():
 
 def update_hat_particles():
     for hat in hat_particles[:]:
-        hat["timer"] -= clock.get_time()
+        hat["timer"] -= dt
         if hat["timer"] <= 0:
             hat_particles.remove(hat)
             continue
@@ -2116,7 +2116,7 @@ def update_hat_particles():
 
 def update_wood_texts():
     for text in wood_texts[:]:
-        text["timer"] -= clock.get_time()
+        text["timer"] -= dt
         if text["timer"] <= 0:
             wood_texts.remove(text)
             continue
@@ -2128,7 +2128,7 @@ def update_wood_texts():
 
 def update_xp_texts():
     for text in xp_texts[:]:
-        text["timer"] -= clock.get_time()
+        text["timer"] -= dt
         if text["timer"] <= 0:
             xp_texts.remove(text)
             continue
@@ -2357,7 +2357,7 @@ def update_interaction_ui():
         last_player_pos = current_pos
         return
     else:
-        stationary_timer += clock.get_time()
+        stationary_timer += dt
         if stationary_timer < STATIONARY_DELAY:
             interaction_ui["alpha"] = 0
             interaction_ui["offset"] = 20
@@ -2451,7 +2451,7 @@ def update_interaction_ui():
         interaction_ui["fade_timer"] = 0
     else:
         if interaction_ui["fade_timer"] < interaction_ui["fade_duration"]:
-            interaction_ui["fade_timer"] += clock.get_time()
+            interaction_ui["fade_timer"] += dt
             progress = min(1.0, interaction_ui["fade_timer"] / interaction_ui["fade_duration"])
             interaction_ui["alpha"] = int(progress * 255)
             interaction_ui["offset"] = 20 * (1 - progress)
@@ -2555,6 +2555,7 @@ def get_time_string(game_time):
 # --- Game Loop ---
 running = True
 while running:
+    dt = clock.get_time()  # Compute delta time once per frame
     if game_over:
         if not fade_done:
             show_game_over()
@@ -2576,13 +2577,13 @@ while running:
                     sys.exit()
         continue
 
-    game_time += clock.get_time() / 1000.0  # Convert milliseconds to seconds
+    game_time += dt / 1000.0  # Convert milliseconds to seconds
     game_surface.fill(BLACK)
     update_sparks()
     update_wood_texts()
     update_xp_texts()
     update_hat_particles()
-    water_frame_timer += clock.get_time()
+    water_frame_timer += dt
     if water_frame_timer >= water_frame_delay:
         water_frame = (water_frame + 1) % len(water_frames)
         water_frame_timer = 0
@@ -2624,7 +2625,7 @@ while running:
         spawn_waller_npc()
         waller_npc_spawned = True
 
-    pirate_spawn_timer += clock.get_time()
+    pirate_spawn_timer += dt
     t = game_time % 96
     if pirate_spawn_timer >= spawn_delay and ((t > 24 and t < 28) or (t >= 76 and t < 96)):
         spawn_pirate()
