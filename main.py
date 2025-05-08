@@ -5,7 +5,6 @@ import math
 import os
 import subprocess
 import pickle
-import math
 
 # --- Init ---
 pygame.init()
@@ -181,6 +180,37 @@ for rare_type in RARE_PIRATE_TYPES:
 pirate_hat_images = {
     level: pygame.image.load(f"Assets/pirate/pirate_hat{level}.png").convert_alpha() for level in range(1, 11)
 }
+
+
+# --- Pre Scale Images ---
+# Pre-scale static tile images to TILE_SIZE
+scaled_tile_images = {}
+for key, image in tile_images.items():
+    scaled_tile_images[key] = pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE))
+
+# Pre-scale water animation frames
+scaled_water_frames = [pygame.transform.scale(frame, (TILE_SIZE, TILE_SIZE)) for frame in water_frames]
+scaled_tile_images[WATER] = scaled_water_frames[water_frame]  # Set initial water frame
+
+# Pre-scale player images
+scaled_player_image = pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE))
+scaled_player_fishing_image = pygame.transform.scale(player_fishing_image, (TILE_SIZE, TILE_SIZE))
+
+# Pre-scale pirate sprites
+scaled_pirate_sprites = {}
+for key, sprite in pirate_sprites.items():
+    scaled_pirate_sprites[key] = pygame.transform.scale(sprite, (TILE_SIZE, TILE_SIZE))
+
+# Pre-scale pirate hat images
+scaled_pirate_hat_images = {}
+for level, hat_image in pirate_hat_images.items():
+    scaled_pirate_hat_images[level] = pygame.transform.scale(hat_image, (TILE_SIZE, TILE_SIZE))
+
+# Pre-scale NPC sprite
+scaled_waller_npc_sprite = pygame.transform.scale(
+    pygame.image.load("Assets/npc_waller.png").convert_alpha(), (TILE_SIZE, TILE_SIZE)
+)
+    
 
 # Load high score
 try:
@@ -528,11 +558,9 @@ def draw_grid():
             if get_tile(gx, gy) in [TURRET, WALL]:
                 light_source_tiles.add((gx, gy))
 
-    # Get player's current tile position
     player_tile = (int(player_pos[0] + 0.5), int(player_pos[1] + 0.5))
     light_source_tiles.add(player_tile)
 
-    # Apply player light with a larger radius (3 tiles)
     for dx in range(-3, 4):
         for dy in range(-3, 4):
             dist = abs(dx) + abs(dy)
@@ -549,19 +577,18 @@ def draw_grid():
             npc_tile = (int(s["x"] + 0.5), int(s["y"] + 0.5))
             light_source_tiles.add(npc_tile)
 
-    # Apply brightness based on distance
     for sx, sy in light_source_tiles:
         local_x = sx - start_x
         local_y = sy - start_y
         if 0 <= local_x < VIEW_WIDTH and 0 <= local_y < VIEW_HEIGHT:
             brightness[local_y][local_x] = max(brightness[local_y][local_x], 0.9)
-        for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             nx, ny = sx + dx, sy + dy
             local_nx = nx - start_x
             local_ny = ny - start_y
             if 0 <= local_nx < VIEW_WIDTH and 0 <= local_ny < VIEW_HEIGHT:
                 brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], 0.5)
-        for dx, dy in [(-2,0), (2,0), (0,-2), (0,2)]:
+        for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
             nx, ny = sx + dx, sy + dy
             local_nx = nx - start_x
             local_ny = ny - start_y
@@ -578,23 +605,18 @@ def draw_grid():
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
             if tile == FISH:
-                # Render water tile first
-                water_image = tile_images[WATER]
-                game_surface.blit(pygame.transform.scale(water_image, (TILE_SIZE, TILE_SIZE)), rect)
-                # Render fish image with fade-out
-                fish_image = tile_images[FISH]
-                scaled_fish = pygame.transform.scale(fish_image, (TILE_SIZE, TILE_SIZE))
+                game_surface.blit(scaled_tile_images[WATER], rect)
+                fish_image = scaled_tile_images[FISH].copy()
                 fish_data = next((f for f in fish_tiles if f["x"] == gx and f["y"] == gy), None)
                 if fish_data:
                     time_left = fish_despawn_time - (now - fish_data["spawn_time"])
                     alpha = 255 if time_left > 5000 else int(255 * (time_left / 5000))
-                    scaled_fish.set_alpha(alpha)
-                game_surface.blit(scaled_fish, rect)
+                    fish_image.set_alpha(alpha)
+                game_surface.blit(fish_image, rect)
             else:
-                image = tile_images.get(tile)
+                image = scaled_tile_images.get(tile)
                 if image:
-                    scaled_image = pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE))
-                    game_surface.blit(scaled_image, rect)
+                    game_surface.blit(image, rect)
                 else:
                     pygame.draw.rect(game_surface, BLACK, rect)
 
@@ -610,13 +632,13 @@ def draw_grid():
                 under_rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
                 tile = get_tile(gx, gy)
                 if tile in [LAND, TURRET, USED_LAND, SAPLING, TREE, LOOT]:
-                    under_land_image = tile_images.get("UNDER_LAND")
+                    under_land_image = scaled_tile_images.get("UNDER_LAND")
                     if under_land_image:
-                        game_surface.blit(pygame.transform.scale(under_land_image, (TILE_SIZE, TILE_SIZE)), under_rect)
+                        game_surface.blit(under_land_image, under_rect)
                 elif tile in [BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3]:
-                    under_wood_image = tile_images.get("UNDER_WOOD")
+                    under_wood_image = scaled_tile_images.get("UNDER_WOOD")
                     if under_wood_image:
-                        game_surface.blit(pygame.transform.scale(under_wood_image, (TILE_SIZE, TILE_SIZE)), under_rect)
+                        game_surface.blit(under_wood_image, under_rect)
 
     # Third pass: Render overlay tiles and turret/wall levels
     for y in range(VIEW_HEIGHT):
@@ -626,17 +648,17 @@ def draw_grid():
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-            if tile in [TURRET, TREE, SAPLING, LOOT, WALL, BOULDER]:  # Added BOULDER
-                land_image = tile_images.get(LAND)
+            if tile in [TURRET, TREE, SAPLING, LOOT, WALL, BOULDER]:
+                land_image = scaled_tile_images.get(LAND)
                 if land_image:
-                    game_surface.blit(pygame.transform.scale(land_image, (TILE_SIZE, TILE_SIZE)), rect)
+                    game_surface.blit(land_image, rect)
                 if tile == WALL:
                     below_tile = get_tile(gx, gy + 1)
-                    overlay_image = tile_images["WALL_TOP"] if below_tile == WALL else tile_images[WALL]
+                    overlay_image = scaled_tile_images["WALL_TOP"] if below_tile == WALL else scaled_tile_images[WALL]
                 else:
-                    overlay_image = tile_images.get(tile)
+                    overlay_image = scaled_tile_images.get(tile)
                 if overlay_image:
-                    game_surface.blit(pygame.transform.scale(overlay_image, (TILE_SIZE, TILE_SIZE)), rect)
+                    game_surface.blit(overlay_image, rect)
             if tile == TURRET:
                 level = turret_levels.get((gx, gy), 1)
                 font = pygame.font.SysFont(None, 20)
@@ -655,64 +677,43 @@ def draw_grid():
         for s in p["ship"]:
             sx = s["x"] - top_left_x
             sy = s["y"] - top_left_y
-            # Skip tiles within 2 tiles of edge during full night
             if darkness_factor == 1.0 and (
                 sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
             ):
                 continue
             if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
-                boat_tile_image = tile_images.get(BOAT_TILE)
+                boat_tile_image = scaled_tile_images.get(BOAT_TILE)
                 if boat_tile_image:
-                    scaled_image = pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE))
+                    boat_tile_image = boat_tile_image.copy()
                     if darkness_factor == 1.0:
-                        # Calculate distance to closest edge
-                        dist_to_edge = min(
-                            sx,             # Distance to left edge
-                            VIEW_WIDTH - sx, # Distance to right edge
-                            sy,             # Distance to top edge
-                            VIEW_HEIGHT - sy # Distance to bottom edge
-                        )
-                        # Interpolate alpha: 0 at dist=2, 255 at dist=5
-                        if dist_to_edge <= 2:
-                            alpha = 0
-                        elif dist_to_edge >= 5:
-                            alpha = 255
-                        else:
-                            alpha = int(255 * (dist_to_edge - 2) / (5 - 2))
-                        scaled_image.set_alpha(alpha)
+                        dist_to_edge = min(sx, VIEW_WIDTH - sx, sy, VIEW_HEIGHT - sy)
+                        alpha = 0 if dist_to_edge <= 2 else 255 if dist_to_edge >= 5 else int(255 * (dist_to_edge - 2) / (5 - 2))
+                        boat_tile_image.set_alpha(alpha)
                     else:
-                        scaled_image.set_alpha(255)  # Full opacity for day/fade
-                    game_surface.blit(scaled_image, (sx * TILE_SIZE, sy * TILE_SIZE))
+                        boat_tile_image.set_alpha(255)
+                    game_surface.blit(boat_tile_image, (sx * TILE_SIZE, sy * TILE_SIZE))
 
-    # Render player at exact position
+    # Render player
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
     if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-        game_surface.blit(pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
-
-    # Render player (switch sprite if fishing)
-    px = player_pos[0] - top_left_x
-    py = player_pos[1] - top_left_y
-    if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-        current_player_image = player_fishing_image if fishing_state else player_image
-        game_surface.blit(pygame.transform.scale(current_player_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
+        current_player_image = scaled_player_fishing_image if fishing_state else scaled_player_image
+        game_surface.blit(current_player_image, (px * TILE_SIZE, py * TILE_SIZE))
 
     # Render bobber
     if bobber:
         bx = bobber["x"] - top_left_x
         by = bobber["y"] - top_left_y
         if 0 <= bx < VIEW_WIDTH and 0 <= by < VIEW_HEIGHT:
-            bobber_image = tile_images["BOBBER"]
+            bobber_image = scaled_tile_images["BOBBER"]
             if bobber["state"] == "waiting":
-                bobber_image = tile_images["BOBBER2"]
+                bobber_image = scaled_tile_images["BOBBER2"]
             elif bobber["state"] == "biting":
-                now = pygame.time.get_ticks()
-                if (now - bobber["last_switch"]) % 1000 < 500:  # Switch every 500ms
-                    bobber_image = tile_images["BOBBER2"]
+                if (now - bobber["last_switch"]) % 1000 < 500:
+                    bobber_image = scaled_tile_images["BOBBER2"]
                 else:
-                    bobber_image = tile_images["BOBBER3"]
-            scaled_bobber = pygame.transform.scale(bobber_image, (TILE_SIZE, TILE_SIZE))
-            game_surface.blit(scaled_bobber, (bx * TILE_SIZE, by * TILE_SIZE))
+                    bobber_image = scaled_tile_images["BOBBER3"]
+            game_surface.blit(bobber_image, (bx * TILE_SIZE, by * TILE_SIZE))
 
     # Render interaction UI
     draw_interaction_ui()
@@ -726,12 +727,14 @@ def draw_grid():
                 level = pirate["level"]
                 is_rare = pirate.get("is_rare", False)
                 rare_type = pirate.get("rare_type", None)
-                if is_rare and rare_type:
-                    sprite_key = f"level_{level}_{rare_type}" if pirate["health"] > 1 else f"base_{rare_type}"
-                else:
-                    sprite_key = f"level_{level}" if pirate["health"] > 1 else "base"
-                pirate_image = pirate_sprites[sprite_key]
-                game_surface.blit(pygame.transform.scale(pirate_image, (TILE_SIZE, TILE_SIZE)), (px * TILE_SIZE, py * TILE_SIZE))
+                sprite_key = (
+                    f"level_{level}_{rare_type}" if is_rare and rare_type and pirate["health"] > 1
+                    else f"base_{rare_type}" if is_rare and rare_type
+                    else f"level_{level}" if pirate["health"] > 1
+                    else "base"
+                )
+                pirate_image = scaled_pirate_sprites[sprite_key]
+                game_surface.blit(pirate_image, (px * TILE_SIZE, py * TILE_SIZE))
                 if is_rare and rare_type == "explosive" and "fuse_count" in pirate:
                     font = pygame.font.SysFont(None, 24)
                     count_text = font.render(str(pirate["fuse_count"]), True, RED)
@@ -740,7 +743,6 @@ def draw_grid():
         if p["state"] == "landed":
             px = p["x"] - top_left_x
             py = p["y"] - top_left_y
-            # Skip edge tiles during full night
             if darkness_factor == 1.0 and (
                 sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
             ):
@@ -751,61 +753,47 @@ def draw_grid():
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
 
-        # Render NPCs
-        for npc in npcs:
-            for s in npc["ship"]:
-                sx = s["x"] - top_left_x
-                sy = s["y"] - top_left_y
-                # Skip tiles within 2 tiles of edge during full night
-                if darkness_factor == 1.0 and (
-                    sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
-                ):
-                    continue
-                if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
-                    if npc["state"] == "boat":
-                        # Render ship tile
-                        boat_tile_image = tile_images.get(BOAT_TILE)
-                        if boat_tile_image:
-                            scaled_boat = pygame.transform.scale(boat_tile_image, (TILE_SIZE, TILE_SIZE))
-                            if darkness_factor == 1.0:
-                                dist_to_edge = min(sx, VIEW_WIDTH - sx, sy, VIEW_HEIGHT - sy)
-                                if dist_to_edge <= 2:
-                                    alpha = 0
-                                elif dist_to_edge >= 5:
-                                    alpha = 255
-                                else:
-                                    alpha = int(255 * (dist_to_edge - 2) / (5 - 2))
-                                scaled_boat.set_alpha(alpha)
-                            else:
-                                scaled_boat.set_alpha(255)
-                            game_surface.blit(scaled_boat, (sx * TILE_SIZE, sy * TILE_SIZE))
-                        # Render NPC sprite on main ship tile
-                        if s["x"] == npc["x"] and s["y"] == npc["y"]:
-                            npc_image = npc["sprite"]
-                            scaled_npc = pygame.transform.scale(npc_image, (TILE_SIZE, TILE_SIZE))
-                            if darkness_factor == 1.0:
-                                scaled_npc.set_alpha(alpha)  # Use same alpha as ship
-                            else:
-                                scaled_npc.set_alpha(255)
-                            game_surface.blit(scaled_npc, (sx * TILE_SIZE, sy * TILE_SIZE))
-                    elif npc["state"] == "docked":
-                        npc_image = npc["sprite"]
-                        scaled_npc = pygame.transform.scale(npc_image, (TILE_SIZE, TILE_SIZE))
-                        scaled_npc.set_alpha(255)  # Always opaque when docked
-                        game_surface.blit(scaled_npc, (sx * TILE_SIZE, sy * TILE_SIZE))
+    # Render NPCs
+    for npc in npcs:
+        for s in npc["ship"]:
+            sx = s["x"] - top_left_x
+            sy = s["y"] - top_left_y
+            if darkness_factor == 1.0 and (
+                sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
+            ):
+                continue
+            if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
+                if npc["state"] == "boat":
+                    boat_tile_image = scaled_tile_images.get(BOAT_TILE)
+                    if boat_tile_image:
+                        boat_tile_image = boat_tile_image.copy()
+                        if darkness_factor == 1.0:
+                            dist_to_edge = min(sx, VIEW_WIDTH - sx, sy, VIEW_HEIGHT - sy)
+                            alpha = 0 if dist_to_edge <= 2 else 255 if dist_to_edge >= 5 else int(255 * (dist_to_edge - 2) / (5 - 2))
+                            boat_tile_image.set_alpha(alpha)
+                        else:
+                            boat_tile_image.set_alpha(255)
+                        game_surface.blit(boat_tile_image, (sx * TILE_SIZE, sy * TILE_SIZE))
+                    if s["x"] == npc["x"] and s["y"] == npc["y"]:
+                        npc_image = scaled_waller_npc_sprite.copy()
+                        if darkness_factor == 1.0:
+                            npc_image.set_alpha(alpha)
+                        else:
+                            npc_image.set_alpha(255)
+                        game_surface.blit(npc_image, (sx * TILE_SIZE, sy * TILE_SIZE))
+                elif npc["state"] == "docked":
+                    game_surface.blit(scaled_waller_npc_sprite, (sx * TILE_SIZE, sy * TILE_SIZE))
 
-    # In draw_grid(), after rendering pirates
+    # Render krakens
     for kraken in krakens:
         if kraken["state"] in ["moving", "destroying"]:
             kx = kraken["x"] - top_left_x
             ky = kraken["y"] - top_left_y
             if 0 <= kx < VIEW_WIDTH and 0 <= ky < VIEW_HEIGHT:
-                darkness_factor = get_darkness_factor(game_time)
-                kraken_image = tile_images["KRAKEN"]
-                scaled_image = pygame.transform.scale(kraken_image, (TILE_SIZE, TILE_SIZE))
+                kraken_image = scaled_tile_images["KRAKEN"].copy()
                 alpha = 255 if darkness_factor < 1.0 else int(255 * (1 - darkness_factor))
-                scaled_image.set_alpha(alpha)
-                game_surface.blit(scaled_image, (kx * TILE_SIZE, ky * TILE_SIZE))
+                kraken_image.set_alpha(alpha)
+                game_surface.blit(kraken_image, (kx * TILE_SIZE, ky * TILE_SIZE))
 
     # Render selected tile overlay and wall placement preview
     if selected_tile:
@@ -813,7 +801,6 @@ def draw_grid():
         sel_px = sel_x - top_left_x
         sel_py = sel_y - top_left_y
         if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
-            # Calculate Manhattan distance from player
             player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
             manhattan_dist = abs(sel_x - player_tile_x) + abs(sel_y - player_tile_y)
             overlay_color = (0, 0, 0, 16) if manhattan_dist > 3 else (0, 0, 0, 128)
@@ -826,20 +813,18 @@ def draw_grid():
         sel_py = sel_y - top_left_y
         if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
             below_tile = get_tile(sel_x, sel_y + 1)
-            wall_image = tile_images["WALL_TOP"] if below_tile == WALL else tile_images[WALL]
-            wall_surface = pygame.transform.scale(wall_image, (TILE_SIZE, TILE_SIZE))
-            wall_surface.set_alpha(128)
-            game_surface.blit(wall_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
-     # Render boulder placement preview
+            wall_image = scaled_tile_images["WALL_TOP"] if below_tile == WALL else scaled_tile_images[WALL]
+            wall_image = wall_image.copy()
+            wall_image.set_alpha(128)
+            game_surface.blit(wall_image, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
     if boulder_placement_mode and selected_tile:
         sel_x, sel_y = selected_tile
         sel_px = sel_x - top_left_x
         sel_py = sel_y - top_left_y
         if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
-            boulder_image = tile_images[BOULDER]
-            boulder_surface = pygame.transform.scale(boulder_image, (TILE_SIZE, TILE_SIZE))
-            boulder_surface.set_alpha(128)  # Semi-transparent preview
-            game_surface.blit(boulder_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
+            boulder_image = scaled_tile_images[BOULDER].copy()
+            boulder_image.set_alpha(128)
+            game_surface.blit(boulder_image, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
     # Render floating text and images (wood and XP)
     for text in wood_texts:
@@ -847,10 +832,11 @@ def draw_grid():
         py = text["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
             if text.get("image"):
-                image = text["image"]
-                scaled_image = pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE))
-                scaled_image.set_alpha(text["alpha"])
-                game_surface.blit(scaled_image, (px * TILE_SIZE, py * TILE_SIZE - 10))
+                image = scaled_tile_images.get(text["image"].name)  # Assuming image has a name attribute or adjust accordingly
+                if image:
+                    image = image.copy()
+                    image.set_alpha(text["alpha"])
+                    game_surface.blit(image, (px * TILE_SIZE, py * TILE_SIZE - 10))
             else:
                 font = pygame.font.SysFont(None, 14)
                 text_surface = font.render(text["text"], True, WHITE)
@@ -873,13 +859,12 @@ def draw_grid():
         py = hat["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
             hat_level = hat["level"]
-            hat_image = pirate_hat_images[hat_level]
+            hat_image = scaled_pirate_hat_images[hat_level]
             rotated_hat = pygame.transform.rotate(hat_image, hat["rotation"])
-            scaled_hat = pygame.transform.scale(rotated_hat, (TILE_SIZE, TILE_SIZE))
             alpha = int((hat["timer"] / hat["initial_timer"]) * 255)
             alpha = max(0, min(255, alpha))
             hat_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-            hat_surface.blit(scaled_hat, (0, 0))
+            hat_surface.blit(rotated_hat, (0, 0))
             hat_surface.set_alpha(alpha)
             hat_rect = hat_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE + TILE_SIZE // 2))
             game_surface.blit(hat_surface, hat_rect.topleft)
@@ -1262,8 +1247,8 @@ def spawn_fish_tiles():
             gx, gy = top_left_x + x, top_left_y + y
             if get_tile(gx, gy) == WATER:
                 water_tiles.append((gx, gy))
-    # Spawn a fish with 1% chance per frame
-    if water_tiles and random.random() < 0.01:
+    # Spawn a fish with 5% chance per second
+    if water_tiles and random.random() < 0.05:
         x, y = random.choice(water_tiles)
         set_tile(x, y, FISH)
         fish_tiles.append({"x": x, "y": y, "spawn_time": now})
@@ -2593,7 +2578,7 @@ while running:
     if water_frame_timer >= water_frame_delay:
         water_frame = (water_frame + 1) % len(water_frames)
         water_frame_timer = 0
-        tile_images[WATER] = water_frames[water_frame]
+        scaled_tile_images[WATER] = scaled_water_frames[water_frame]
     # Update selected tile based on mouse position
     mouse_x, mouse_y = pygame.mouse.get_pos()
     world_tile_x, world_tile_y = screen_to_world(mouse_x, mouse_y)
