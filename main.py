@@ -63,6 +63,10 @@ MAX_SCALE = 4
 TILE_SIZE = 32
 VIEW_WIDTH, VIEW_HEIGHT = 30, 30
 WIDTH, HEIGHT = VIEW_WIDTH * TILE_SIZE, VIEW_HEIGHT * TILE_SIZE
+view_left = 0
+view_top = 0
+view_right = 0
+view_bottom = 0
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 clock = pygame.time.Clock()
 
@@ -135,6 +139,8 @@ tile_images = {
 }
 
 player_fishing_image = pygame.image.load("Assets/player_fishing.png").convert_alpha()
+fish_spawn_timer = 0
+fish_spawn_interval = 1000  # 1 second
 
 # Kraken-specific constants
 KRAKEN_SPAWN_CHANCE = 0.50  # 10% chance per night spawn cycle
@@ -507,7 +513,7 @@ def draw_grid():
     global game_surface
     top_left_x = player_pos[0] - VIEW_WIDTH / 2.0
     top_left_y = player_pos[1] - VIEW_HEIGHT / 2.0
-    start_x, start_y = int(top_left_x), int(top_left_y)
+    start_x, start_y = view_left, view_top
 
     darkness_factor = get_darkness_factor(game_time)
 
@@ -2616,9 +2622,13 @@ while running:
     update_npcs()
     update_turrets()
     update_projectiles()
-    spawn_fish_tiles()
     update_fish_tiles()
     update_fishing()
+
+    fish_spawn_timer += dt
+    if fish_spawn_timer >= fish_spawn_interval:
+        spawn_fish_tiles()
+        fish_spawn_timer = 0
     
 
     if wood >= 50 and not waller_npc_spawned:
@@ -2658,6 +2668,10 @@ while running:
                 SCALE -= 1
 
     update_player_movement()
+    view_left = int(player_pos[0] - VIEW_WIDTH // 2)
+    view_top = int(player_pos[1] - VIEW_HEIGHT // 2)
+    view_right = view_left + VIEW_WIDTH
+    view_bottom = view_top + VIEW_HEIGHT
 
     clock.tick(60)
 
