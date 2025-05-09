@@ -831,8 +831,8 @@ def draw_grid():
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            if text.get("image"):
-                image = scaled_tile_images.get(text["image"].name)  # Assuming image has a name attribute or adjust accordingly
+            if text.get("image_key"):  # Check for image_key instead of image
+                image = scaled_tile_images.get(text["image_key"])  # Use key to get pre-scaled image
                 if image:
                     image = image.copy()
                     image.set_alpha(text["alpha"])
@@ -2160,7 +2160,7 @@ def interact(button):
                     wood_texts.append({
                         "x": interaction_pos_x,
                         "y": interaction_pos_y - 0.5,
-                        "text": "-10 Wood",
+                        "text": "-50 Wood",  # Corrected from "-10 Wood" to match cost
                         "timer": 1000,
                         "alpha": 255
                     })
@@ -2168,7 +2168,7 @@ def interact(button):
                         "x": interaction_pos_x,
                         "y": interaction_pos_y - 0.5,
                         "text": "",  # Empty text, using image instead
-                        "image": tile_images["FISHING_ROD"],
+                        "image_key": "FISHING_ROD",  # Use key instead of Surface
                         "timer": 1000,
                         "alpha": 255
                     })
@@ -2383,7 +2383,7 @@ def update_interaction_ui():
                 wood_texts.append({
                     "x": player_pos[0],
                     "y": player_pos[1] - 0.5,
-                    "text": "-10 Wood",
+                    "text": "-50 Wood",  # Corrected from "-10 Wood"
                     "timer": 1000,
                     "alpha": 255
                 })
@@ -2391,7 +2391,7 @@ def update_interaction_ui():
                     "x": player_pos[0],
                     "y": player_pos[1] - 0.5,
                     "text": "",  # Empty text, using image instead
-                    "image": tile_images["FISHING_ROD"],
+                    "image_key": "FISHING_ROD",  # Use key instead of Surface
                     "timer": 1000,
                     "alpha": 255
                 })
