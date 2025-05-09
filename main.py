@@ -2032,11 +2032,11 @@ def update_fishing():
         if now >= bobber["bite_timer"]:
             bobber["state"] = "biting"
             bobber["bite_timer"] = now + bite_duration
-            bobber["last_switch"] = now
+            bobber["last_switchtsam"] = now
     elif bobber["state"] == "biting":
         # Switch between bobber2.png and bobber3.png every 500ms
         if now - bobber["last_switch"] >= 500:
-            bobber["last_switch"] = now
+            bobber["last_switch"] += 500  # Increment by 500ms instead of resetting to now
         if now >= bobber["bite_timer"]:
             bobber["state"] = "waiting"
             bobber["bite_timer"] = now + random.uniform(2000, 5000)
