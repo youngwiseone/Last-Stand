@@ -467,6 +467,11 @@ tiles_placed = 0
 days_survived = 0  # Number of days survived
 last_cycle_time = 0.0  # Track time of last cycle completion
 
+player_level = 1  # Starting level
+player_xp = 0  # Current XP
+player_max_level = 99  # Same as turret max level
+player_xp_texts = []  # Floating text for XP gains
+
 game_over = False
 kraken_game_over = False
 fade_done = False
@@ -855,6 +860,17 @@ def draw_grid():
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
             game_surface.blit(text_surface, text_rect)
 
+    # Render player XP texts
+    for text in player_xp_texts:
+        px = player_pos[0] - top_left_x
+        py = player_pos[1] - top_left_y
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            font = pygame.font.SysFont(None, 14)
+            text_surface = font.render(text["text"], True, YELLOW)
+            text_surface.set_alpha(text["alpha"])
+            text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
+            game_surface.blit(text_surface, text_rect)
+
     # Render hat particles
     for hat in hat_particles:
         px = hat["x"] - top_left_x
@@ -936,6 +952,7 @@ def draw_ui():
     time_str = get_time_string(game_time)  # Add clock
     time_text = font.render(time_str, True, WHITE)
     day_text = font.render(f"Day: {days_survived + 1}", True, WHITE)  # +1 for 1-based day count
+    level_text = font.render(f"Level: {player_level}", True, WHITE)
 
     screen.blit(wood_text, (10, 10))
     screen.blit(score_text, (10, 40))
@@ -943,6 +960,7 @@ def draw_ui():
     screen.blit(help_text, (10, 100))
     screen.blit(time_text, (10, 130))
     screen.blit(day_text, (10, 160))
+    screen.blit(level_text, (10, 190))
 
 def draw_minimap():
     """Simplified minimap showing nearby chunks, with nighttime visibility limited to view distance."""
@@ -2141,7 +2159,9 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, wall_placement_mode, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught
+    global wood, tiles_placed, turrets_placed, wall_placement_mode, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_xp_texts, pirates_killed
+
+
     if not selected_tile:
         return
     x, y = selected_tile
@@ -2153,6 +2173,64 @@ def interact(button):
     tile = get_tile(x, y)
     
     if button == 1:  # Left-click
+        # Attack pirates
+        for p in pirates:
+            for pirate in p["pirates"][:]:  # Iterate over copy to allow removal
+                dist = math.hypot(pirate["x"] - x, pirate["y"] - y)
+                if dist < 0.5:  # Within 0.5 tiles
+                    pre_hit_health = pirate["health"]
+                    pirate["health"] -= player_level  # Deal damage equal to player level
+                    # Handle hat drop at health = 1
+                    if pre_hit_health > 1 and pirate["health"] == 1 and not pirate.get("has_dropped_hat", False):
+                        hat_particles.append({
+                            "x": pirate["x"],
+                            "y": pirate["y"] - 0.5,
+                            "vel_x": random.uniform(-0.05, 0.05),
+                            "vel_y": -0.1,
+                            "rotation": 0,
+                            "rotation_speed": random.uniform(-10, 10),
+                            "timer": 1000,
+                            "initial_timer": 1000,
+                            "level": pirate["level"]
+                        })
+                        pirate["has_dropped_hat"] = True
+                    if pirate["health"] <= 0:
+                        if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
+                            for key in ["fuse_timer", "fuse_count", "last_count_update"]:
+                                pirate.pop(key, None)
+                        # Drop loot for rare pirates
+                        if pirate.get("is_rare", False):
+                            pirate_tile_x, pirate_tile_y = int(pirate["x"]), int(pirate["y"])
+                            tile_type = get_tile(pirate_tile_x, pirate_tile_y)
+                            if (tile_type in MOVEMENT_TILES and 
+                                tile_type not in (WATER, BOAT_TILE, TURRET) and 
+                                random.random() < 0.33):
+                                set_tile(pirate_tile_x, pirate_tile_y, LOOT)
+                        # Award XP
+                        xp_gained = pirate["xp_value"]
+                        player_xp += xp_gained
+                        player_xp_texts.append({
+                            "x": player_pos[0],
+                            "y": player_pos[1],
+                            "text": f"+{xp_gained} XP",
+                            "timer": 1000,
+                            "alpha": 255
+                        })
+                        # Check for level-up
+                        while player_level < player_max_level and player_xp >= math.pow(2, player_level - 1):
+                            player_xp -= math.pow(2, player_level - 1)
+                            player_level += 1
+                            player_xp_texts.append({
+                                "x": player_pos[0],
+                                "y": player_pos[1],
+                                "text": f"Level Up! Level {player_level}",
+                                "timer": 1000,
+                                "alpha": 255
+                            })
+                        p["pirates"].remove(pirate)
+                        pirates_killed += 1
+                        explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
+                    return  # Exit after attacking
         # Check if clicking the NPC
         for npc in npcs:
             if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
@@ -2504,6 +2582,16 @@ def update_player_movement():
         if old_chunk != new_chunk:
             manage_chunks()
 
+def update_player_xp_texts():
+    for text in player_xp_texts[:]:
+        text["timer"] -= dt
+        if text["timer"] <= 0:
+            player_xp_texts.remove(text)
+            continue
+        text["y"] -= 0.02  # Move upward
+        text["alpha"] = int((text["timer"] / 1000) * 255)
+        text["alpha"] = max(0, min(255, text["alpha"]))
+
 def get_darkness_factor(game_time):
     cycle = 96.0  # Total cycle length: 48s day + 48s night
     t = game_time % cycle
@@ -2581,6 +2669,7 @@ while running:
     update_sparks()
     update_wood_texts()
     update_xp_texts()
+    update_player_xp_texts()
     update_hat_particles()
     water_frame_timer += dt
     if water_frame_timer >= water_frame_delay:
