@@ -464,6 +464,8 @@ last_chunks_version = 0  # Last version seen by the minimap
 turrets_placed = 0
 pirates_killed = 0
 tiles_placed = 0
+days_survived = 0  # Number of days survived
+last_cycle_time = 0.0  # Track time of last cycle completion
 
 game_over = False
 kraken_game_over = False
@@ -925,7 +927,7 @@ def draw_grid():
 
 def draw_ui():
     font = pygame.font.SysFont(None, 28)
-    score = turrets_placed + pirates_killed + tiles_placed
+    score = turrets_placed + pirates_killed + tiles_placed + days_survived
     wood_text = font.render(f"Wood: {wood}", True, WHITE)
     score_text = font.render(f"Score: {score}", True, WHITE)
     quit_text = font.render("Press ESC to quit", True, WHITE)
@@ -933,12 +935,14 @@ def draw_ui():
     help_text = font.render("Press I for Help", True, help_color)
     time_str = get_time_string(game_time)  # Add clock
     time_text = font.render(time_str, True, WHITE)
+    day_text = font.render(f"Day: {days_survived + 1}", True, WHITE)  # +1 for 1-based day count
 
     screen.blit(wood_text, (10, 10))
     screen.blit(score_text, (10, 40))
     screen.blit(quit_text, (10, 70))
     screen.blit(help_text, (10, 100))
     screen.blit(time_text, (10, 130))
+    screen.blit(day_text, (10, 160))
 
 def draw_minimap():
     """Simplified minimap showing nearby chunks, with nighttime visibility limited to view distance."""
@@ -1076,7 +1080,7 @@ def draw_minimap():
 
 def show_game_over():
     global high_score, fade_done
-    score = turrets_placed + pirates_killed + tiles_placed
+    score = turrets_placed + pirates_killed + tiles_placed + days_survived
     if score > high_score:
         high_score = score
         with open("score.txt", "w") as f:
@@ -2331,7 +2335,7 @@ def interact(button):
             sound_place_turret.play()
 
 def update_interaction_ui():
-    global interaction_ui, stationary_timer, last_player_pos, has_fishing_rod
+    global wood, interaction_ui, stationary_timer, last_player_pos, has_fishing_rod
     if not interaction_ui_enabled:
         interaction_ui["alpha"] = 0
         interaction_ui["offset"] = 20
@@ -2569,6 +2573,10 @@ while running:
         continue
 
     game_time += dt / 1000.0  # Convert milliseconds to seconds
+    cycle_length = 96.0  # One day-night cycle in seconds
+    if game_time - last_cycle_time >= cycle_length:
+        days_survived += 1
+        last_cycle_time = game_time - (game_time % cycle_length)  # Align to cycle boundary
     game_surface.fill(BLACK)
     update_sparks()
     update_wood_texts()
@@ -2613,8 +2621,7 @@ while running:
     fish_spawn_timer += dt
     if fish_spawn_timer >= fish_spawn_interval:
         spawn_fish_tiles()
-        fish_spawn_timer = 0
-    
+        fish_spawn_timer = 0    
 
     if wood >= 50 and not waller_npc_spawned:
         spawn_waller_npc()
