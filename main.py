@@ -80,6 +80,17 @@ sound_place_land = pygame.mixer.Sound("Assets/sound/place_land.wav")
 sound_plant_sapling = pygame.mixer.Sound("Assets/sound/plant_sapling.wav")
 sound_place_turret = pygame.mixer.Sound("Assets/sound/place_turret.wav")
 
+# --- Music ---
+music_files = {
+    "morning": "Assets/music/Morning.wav",
+    "afternoon": "Assets/music/Afternoon.wav",
+    "night": "Assets/music/Night.wav",
+    "late_night": "Assets/music/Late_night.wav"
+}
+
+# Load and set up music
+pygame.mixer.music.set_volume(0.5) 
+
 # --- Colors ---
 BLUE = (50, 150, 255)
 GREEN = (50, 200, 50)
@@ -232,6 +243,18 @@ def get_speed_multiplier():
     base_multiplier = SCALE / BASE_SCALE
     # Apply a minimum multiplier for SCALE = 1 to avoid being too slow
     return max(0.75, base_multiplier) if SCALE == 1 else base_multiplier
+
+def get_music_period(game_time):
+    cycle = 96.0  # Total cycle length
+    t = game_time % cycle
+    if 28 <= t < 52:
+        return "morning"  # 7am–1pm
+    elif 52 <= t < 76:
+        return "afternoon"  # 1pm–7pm
+    elif (76 <= t < 96) or (0 <= t < 4):
+        return "night"  # 7pm–1am
+    else:  # 4 <= t < 28
+        return "late_night"  # 1am–7am
 
 def world_to_chunk(x, y):
     """Convert world coordinates to chunk coordinates."""
@@ -454,12 +477,16 @@ def manage_chunks():
 
 # --- Game State ---
 selected_tile = None  # Will store the (x, y) of the tile under the mouse
-game_time = 24.0  # Add this line after other global variables like wood, player_pos, etc.
+game_time = 28.0  # 6am is 24.0, 7am is 28.0, 8am is 32.0, etc.
 minimap_base_cache = None  # Cached base layer of the minimap (tiles only)
 minimap_cache_valid = False  # Flag to indicate if the cache needs to be updated
 last_player_chunk = player_chunk  # Track the last chunk to detect movement
 chunks_version = 0  # Version counter for tracking changes to chunks
 last_chunks_version = 0  # Last version seen by the minimap
+
+current_music = None  # Tracks the current music period ("morning", "afternoon", "night", "late_night")
+music_fade_timer = 0  # Timer for fading out music
+music_fade_duration = 1000  # 1 second fade-out
 
 turrets_placed = 0
 pirates_killed = 0
@@ -544,6 +571,11 @@ picked_boulder_pos = None  # Stores the position of the picked-up boulder
 game_surface = pygame.Surface((WIDTH, HEIGHT))
 
 initialize_starting_area()
+
+# Start initial music
+current_music = get_music_period(game_time)
+pygame.mixer.music.load(music_files[current_music])
+pygame.mixer.music.play(-1)  # Loop indefinitely
 
 # --- Drawing ---
 def draw_grid():
@@ -2634,6 +2666,26 @@ def get_time_string(game_time):
     else:
         minute_str = "45"
     return f"{display_hour}:{minute_str}{period}"
+    
+def update_music():
+    global current_music, music_fade_timer
+    new_period = get_music_period(game_time)
+    
+    if new_period != current_music:
+        if music_fade_timer == 0:
+            # Start fading out current music
+            if pygame.mixer.music.get_busy():
+                pygame.mixer.music.fadeout(music_fade_duration)
+            music_fade_timer = music_fade_duration
+        else:
+            # Continue fading
+            music_fade_timer -= dt
+            if music_fade_timer <= 0:
+                # Fade complete, switch to new music
+                music_fade_timer = 0
+                current_music = new_period
+                pygame.mixer.music.load(music_files[current_music])
+                pygame.mixer.music.play(-1)  # Loop indefinitely
 
 # --- Game Loop ---
 running = True
@@ -2650,6 +2702,7 @@ while running:
                 sys.exit()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
+                    pygame.mixer.music.stop()
                     clear_chunk_files()
                     pygame.quit()
                     sys.exit()
@@ -2666,6 +2719,7 @@ while running:
         days_survived += 1
         last_cycle_time = game_time - (game_time % cycle_length)  # Align to cycle boundary
     game_surface.fill(BLACK)
+    update_music()
     update_sparks()
     update_wood_texts()
     update_xp_texts()
