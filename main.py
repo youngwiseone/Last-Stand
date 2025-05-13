@@ -692,10 +692,19 @@ def draw_grid():
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-            if tile in [TURRET, TREE, SAPLING, LOOT, WALL, BOULDER]:
-                land_image = scaled_tile_images.get(LAND)
-                if land_image:
-                    game_surface.blit(land_image, rect)
+            if tile in [TURRET, TREE, SAPLING, LOOT, WALL, BOULDER, STEERING_WHEEL]:
+                # Render the base tile underneath
+                if tile == STEERING_WHEEL:
+                    # For STEERING_WHEEL, render BOAT_TILE underneath
+                    boat_image = scaled_tile_images.get(BOAT_TILE)
+                    if boat_image:
+                        game_surface.blit(boat_image, rect)
+                else:
+                    # For other tiles, render LAND underneath
+                    land_image = scaled_tile_images.get(LAND)
+                    if land_image:
+                        game_surface.blit(land_image, rect)
+                # Render the overlay image
                 if tile == WALL:
                     below_tile = get_tile(gx, gy + 1)
                     overlay_image = scaled_tile_images["WALL_TOP"] if below_tile == WALL else scaled_tile_images[WALL]
@@ -747,7 +756,7 @@ def draw_grid():
             game_surface.blit(current_player_image, (px * TILE_SIZE, py * TILE_SIZE))
     else:
         if boat_entity:
-            # Render boat tiles
+            # Render all boat tiles, including one under the steering wheel position
             for offset in boat_entity["offsets"]:
                 tile_x = player_pos[0] + offset[0]
                 tile_y = player_pos[1] + offset[1]
@@ -756,10 +765,10 @@ def draw_grid():
                 if 0 <= tx < VIEW_WIDTH and 0 <= ty < VIEW_HEIGHT:
                     game_surface.blit(scaled_tile_images[BOAT_TILE], (tx * TILE_SIZE, ty * TILE_SIZE))
             
-            # Render steering wheel and player sprite at player position
+            # Render player sprite and steering wheel at player position
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-                game_surface.blit(scaled_tile_images[STEERING_WHEEL], (px * TILE_SIZE, py * TILE_SIZE))
                 game_surface.blit(scaled_player_image, (px * TILE_SIZE, py * TILE_SIZE))
+                game_surface.blit(scaled_tile_images[STEERING_WHEEL], (px * TILE_SIZE, py * TILE_SIZE))
 
     # Render bobber
     if bobber:
@@ -855,22 +864,6 @@ def draw_grid():
                 alpha = 255 if darkness_factor < 1.0 else int(255 * (1 - darkness_factor))
                 kraken_image.set_alpha(alpha)
                 game_surface.blit(kraken_image, (kx * TILE_SIZE, ky * TILE_SIZE))
-
-    # Render boat entity border
-    if in_boat_mode and boat_entity:
-        # Render boat tiles using offsets
-        for offset_x, offset_y in boat_entity["offsets"]:
-            tile_x = player_pos[0] + offset_x
-            tile_y = player_pos[1] + offset_y
-            tx = tile_x - top_left_x
-            ty = tile_y - top_left_y
-            if 0 <= tx < VIEW_WIDTH and 0 <= ty < VIEW_HEIGHT:
-                game_surface.blit(scaled_tile_images[BOAT_TILE], (tx * TILE_SIZE, ty * TILE_SIZE))
-        # Render steering wheel at player position
-        px = player_pos[0] - top_left_x
-        py = player_pos[1] - top_left_y
-        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            game_surface.blit(scaled_tile_images[STEERING_WHEEL], (px * TILE_SIZE, py * TILE_SIZE))
 
     # Render selected tile overlay and wall placement preview
     if selected_tile:
