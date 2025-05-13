@@ -115,13 +115,13 @@ RARE_TYPE_COLORS = {
 }
 
 # --- Tile Types ---
-WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, BOULDER, FISH = range(13)
+WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, BOULDER, FISH, STEERING_WHEEL = range(14)
 
 # Approved tiles for movement
-MOVEMENT_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TURRET, BOULDER)
+MOVEMENT_TILES = (BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TURRET, BOULDER, STEERING_WHEEL)
 
 # Approved tiles for boat tile adjacency
-LAND_TILES = ( BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TREE, TURRET, BOULDER)
+LAND_TILES = (BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TREE, TURRET, BOULDER, STEERING_WHEEL)
 
 # --- Load Tile Images ---
 tile_images = {
@@ -145,7 +145,9 @@ tile_images = {
     "BOBBER": pygame.image.load("Assets/bobber.png").convert_alpha(),
     "BOBBER2": pygame.image.load("Assets/bobber2.png").convert_alpha(),
     "BOBBER3": pygame.image.load("Assets/bobber3.png").convert_alpha(),
-    "KRAKEN": pygame.transform.scale(pygame.image.load("Assets/kraken.png").convert_alpha(), (TILE_SIZE, TILE_SIZE))
+    "KRAKEN": pygame.transform.scale(pygame.image.load("Assets/kraken.png").convert_alpha(), (TILE_SIZE, TILE_SIZE)),
+    STEERING_WHEEL: pygame.image.load("Assets/steering_wheel.png").convert_alpha(),
+    "ARROW": pygame.image.load("Assets/arrow.png").convert_alpha(),  # Arrow for steering direction
 }
 
 player_fishing_image = pygame.image.load("Assets/player_fishing.png").convert_alpha()
@@ -520,6 +522,9 @@ fish_despawn_time = 60000  # 1 minute in milliseconds
 bobber_speed = 0.1  # Speed of bobber movement (tiles per frame)
 bite_interval = random.uniform(2000, 5000)  # Random interval for fish bites (2–5 seconds)
 bite_duration = 1000  # Duration of a fish bite (1 second)
+boat_entity = None  # {"steering_pos": (x, y), "tiles": [(x, y), ...], "state": "idle"/"steering"/"moving", "direction": (dx, dy)}
+steering_interaction = False  # True when interacting with steering wheel
+in_boat_mode = False
 
 last_player_pos = list(player_pos)
 stationary_timer = 0
@@ -735,9 +740,26 @@ def draw_grid():
     # Render player
     px = player_pos[0] - top_left_x
     py = player_pos[1] - top_left_y
-    if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-        current_player_image = scaled_player_fishing_image if fishing_state else scaled_player_image
-        game_surface.blit(current_player_image, (px * TILE_SIZE, py * TILE_SIZE))
+
+    if not in_boat_mode:
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            current_player_image = scaled_player_fishing_image if fishing_state else scaled_player_image
+            game_surface.blit(current_player_image, (px * TILE_SIZE, py * TILE_SIZE))
+    else:
+        if boat_entity:
+            # Render boat tiles
+            for offset in boat_entity["offsets"]:
+                tile_x = player_pos[0] + offset[0]
+                tile_y = player_pos[1] + offset[1]
+                tx = tile_x - top_left_x
+                ty = tile_y - top_left_y
+                if 0 <= tx < VIEW_WIDTH and 0 <= ty < VIEW_HEIGHT:
+                    game_surface.blit(scaled_tile_images[BOAT_TILE], (tx * TILE_SIZE, ty * TILE_SIZE))
+            
+            # Render steering wheel and player sprite at player position
+            if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+                game_surface.blit(scaled_tile_images[STEERING_WHEEL], (px * TILE_SIZE, py * TILE_SIZE))
+                game_surface.blit(scaled_player_image, (px * TILE_SIZE, py * TILE_SIZE))
 
     # Render bobber
     if bobber:
@@ -833,6 +855,22 @@ def draw_grid():
                 alpha = 255 if darkness_factor < 1.0 else int(255 * (1 - darkness_factor))
                 kraken_image.set_alpha(alpha)
                 game_surface.blit(kraken_image, (kx * TILE_SIZE, ky * TILE_SIZE))
+
+    # Render boat entity border
+    if in_boat_mode and boat_entity:
+        # Render boat tiles using offsets
+        for offset_x, offset_y in boat_entity["offsets"]:
+            tile_x = player_pos[0] + offset_x
+            tile_y = player_pos[1] + offset_y
+            tx = tile_x - top_left_x
+            ty = tile_y - top_left_y
+            if 0 <= tx < VIEW_WIDTH and 0 <= ty < VIEW_HEIGHT:
+                game_surface.blit(scaled_tile_images[BOAT_TILE], (tx * TILE_SIZE, ty * TILE_SIZE))
+        # Render steering wheel at player position
+        px = player_pos[0] - top_left_x
+        py = player_pos[1] - top_left_y
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            game_surface.blit(scaled_tile_images[STEERING_WHEEL], (px * TILE_SIZE, py * TILE_SIZE))
 
     # Render selected tile overlay and wall placement preview
     if selected_tile:
@@ -1236,10 +1274,38 @@ def is_on_land(pos):
             return False
     return True
 
+def find_connected_boat_tiles(start_x, start_y, max_depth=6):
+    visited = set()
+    frontier = [(start_x, start_y, 0)]
+    connected_tiles = []
+    while frontier:
+        x, y, depth = frontier.pop(0)
+        if (x, y) in visited or depth > max_depth:
+            continue
+        tile = get_tile(x, y)
+        if tile in (BOAT_TILE, STEERING_WHEEL):  # Include STEERING_WHEEL
+            visited.add((x, y))
+            connected_tiles.append((x, y))
+            neighbors = [(x+1, y), (x-1, y), (x, y+1), (x, y-1)]
+            for nx, ny in neighbors:
+                if (nx, ny) not in visited:
+                    frontier.append((nx, ny, depth + 1))
+    return connected_tiles
+
 def update_land_spread():
+    global boat_tiles
     now = pygame.time.get_ticks()
     top_left_x = int(player_pos[0] - VIEW_WIDTH // 2)  # Floor to integer
     top_left_y = int(player_pos[1] - VIEW_HEIGHT // 2)  # Floor to integer
+
+    if boat_entity:
+        boat_tiles = set()
+        for offset_x, offset_y in boat_entity["offsets"]:
+            tile_x = int(player_pos[0] + offset_x + 0.5)
+            tile_y = int(player_pos[1] + offset_y + 0.5)
+            boat_tiles.add((tile_x, tile_y))
+    else:
+        boat_tiles = set()
 
     # Step 1: Find BOAT_TILE tiles adjacent to LAND and add to land_spread
     for y in range(VIEW_HEIGHT):
@@ -2191,7 +2257,9 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, wall_placement_mode, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_xp_texts, pirates_killed
+    global wood, tiles_placed, turrets_placed, wall_placement_mode, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode
+
+
 
 
     if not selected_tile:
@@ -2355,7 +2423,28 @@ def interact(button):
             interaction_ui["left_message"] = "Click a land tile to place the boulder\nRight click to cancel"
             interaction_ui["alpha"] = 255
             return
-        # Existing interactions
+        if tile == STEERING_WHEEL and not in_boat_mode:
+            sx, sy = x, y
+            connected_tiles = find_connected_boat_tiles(sx, sy)
+            if connected_tiles:
+                # Store relative offsets from steering wheel
+                offsets = [(tx - sx, ty - sy) for tx, ty in connected_tiles]
+                # Convert all connected tiles (including steering wheel) to water
+                for tx, ty in connected_tiles:
+                    set_tile(tx, ty, WATER)
+                set_tile(sx, sy, WATER)  # Ensure steering wheel tile is also water
+                # Define boat entity with offsets
+                boat_entity = {"offsets": offsets}
+                in_boat_mode = True
+                player_pos = [sx + 0.5, sy + 0.5]  # Snap to steering wheel position
+            return
+        if tile == BOAT_TILE and wood >= 1:
+            # Place steering wheel 
+            set_tile(x, y, STEERING_WHEEL)
+            wood -= 1 #TODO Update to correct cost later
+            tiles_placed += 1                
+            return
+        # Place Boat Tile
         if tile == WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
             set_tile(x, y, BOAT_TILE)
             wood -= 3
@@ -2422,7 +2511,22 @@ def interact(button):
             wall_levels[(x, y)] = current_level + 1  # Increase level
             wood -= 5
             tiles_placed += 1
-        # Existing turret logic
+        if steering_interaction and tile == STEERING_WHEEL:
+            steering_interaction = False
+            return
+        if in_boat_mode:
+            # Exit boat mode: Place boat tiles back
+            for offset in boat_entity["offsets"]:
+                tile_x = int(player_pos[0] + offset[0] + 0.5)
+                tile_y = int(player_pos[1] + offset[1] + 0.5)
+                set_tile(tile_x, tile_y, BOAT_TILE)
+            # Place steering wheel at player's current position
+            steering_x = int(player_pos[0] + 0.5)
+            steering_y = int(player_pos[1] + 0.5)
+            set_tile(steering_x, steering_y, STEERING_WHEEL)
+            in_boat_mode = False
+            boat_entity = None
+            return
         turret_pos = (x, y)
         if tile == TURRET:
             level = turret_levels.get(turret_pos, 1)
@@ -2523,6 +2627,14 @@ def update_interaction_ui():
     if tile == FISH and has_fishing_rod:
         interaction_ui["left_message"] = "Fish for Wood\n(Left Click)"
         interaction_ui["alpha"] = 255
+    elif steering_interaction and tile == STEERING_WHEEL:
+        interaction_ui["left_message"] = "Click to move boat\nRight click to cancel"
+        interaction_ui["alpha"] = 255
+        return
+    elif tile == BOAT_TILE and wood >= 150 and not boat_entity:
+        interaction_ui["right_message"] = "Place Steering Wheel\n-150 Wood"
+    elif tile == STEERING_WHEEL:
+        interaction_ui["left_message"] = "Steer Boat"
     # Show boulder pickup message
     elif tile == BOULDER:
         interaction_ui["left_message"] = "Pick up Boulder"
@@ -2580,39 +2692,70 @@ def update_trees():
         del tree_growth[pos]
 
 def update_player_movement():
-    global player_pos, facing, player_chunk
-    if fishing_state:
-        return  # Prevent movement while fishing
+    global player_pos, facing, player_chunk, fishing_state, bobber, in_boat_mode, boat_entity
     keys = pygame.key.get_pressed()
-    base_speed = 0.15  # Base movement speed (pixels per frame at SCALE = 2)
-    speed = base_speed * get_speed_multiplier()  # Adjust speed based on scale
+    
+    # Initialize dx and dy at the start
     dx, dy = 0.0, 0.0
-
-    if keys[pygame.K_w]:
-        dy -= speed
-    if keys[pygame.K_s]:
-        dy += speed
-    if keys[pygame.K_a]:
-        dx -= speed
-    if keys[pygame.K_d]:
-        dx += speed
-
-    # Normalize diagonal movement
-    if dx != 0 or dy != 0:
-        length = math.hypot(dx, dy)
-        if length > 0:
-            dx, dy = dx / length * speed, dy / length * speed
-        facing = [dx, dy] if dx != 0 or dy != 0 else facing
-
-    # Check if the new position keeps the hitbox on land
-    new_x, new_y = player_pos[0] + dx, player_pos[1] + dy
-    if is_on_land((new_x, new_y)):
-        old_chunk = player_chunk
-        player_pos[0], player_pos[1] = new_x, new_y
-        update_player_chunk()  # Update player_chunk
-        new_chunk = player_chunk  # Use updated player_chunk
-        if old_chunk != new_chunk:
-            manage_chunks()
+    
+    if in_boat_mode:
+        base_speed = 0.05  # Match pirate ship speed
+        speed = base_speed * get_speed_multiplier()
+        if keys[pygame.K_w]:
+            dy -= speed
+        if keys[pygame.K_s]:
+            dy += speed
+        if keys[pygame.K_a]:
+            dx -= speed
+        if keys[pygame.K_d]:
+            dx += speed
+        # Check for movement to cancel fishing
+        if dx != 0 or dy != 0:
+            fishing_state = None
+            bobber = None
+            new_x = player_pos[0] + dx
+            new_y = player_pos[1] + dy
+            # Check if all boat tiles can move to new positions
+            can_move = True
+            for offset in boat_entity["offsets"]:
+                tile_x = int(new_x + offset[0] + 0.5)
+                tile_y = int(new_y + offset[1] + 0.5)
+                tile = get_tile(tile_x, tile_y)
+                if tile not in (WATER, FISH):
+                    can_move = False
+                    break
+            if can_move:
+                old_chunk = player_chunk
+                player_pos[0] = new_x
+                player_pos[1] = new_y
+                update_player_chunk()
+                new_chunk = player_chunk
+                if old_chunk != new_chunk:
+                    manage_chunks()
+    else:
+        base_speed = 0.15
+        speed = base_speed * get_speed_multiplier()
+        if keys[pygame.K_w]:
+            dy -= speed
+        if keys[pygame.K_s]:
+            dy += speed
+        if keys[pygame.K_a]:
+            dx -= speed
+        if keys[pygame.K_d]:
+            dx += speed
+        if dx != 0 or dy != 0:
+            length = math.hypot(dx, dy)
+            if length > 0:
+                dx, dy = dx / length * speed, dy / length * speed
+            facing = [dx, dy] if dx != 0 or dy != 0 else facing
+        new_x, new_y = player_pos[0] + dx, player_pos[1] + dy
+        if is_on_land((new_x, new_y)):
+            old_chunk = player_chunk
+            player_pos[0], player_pos[1] = new_x, new_y
+            update_player_chunk()
+            new_chunk = player_chunk
+            if old_chunk != new_chunk:
+                manage_chunks()
 
 def update_player_xp_texts():
     for text in player_xp_texts[:]:
@@ -2801,7 +2944,7 @@ while running:
                 SCALE += 1
             elif event.y < 0 and SCALE > MIN_SCALE:
                 SCALE -= 1
-
+    
     update_player_movement()
     view_left = int(player_pos[0] - VIEW_WIDTH // 2)
     view_top = int(player_pos[1] - VIEW_HEIGHT // 2)
