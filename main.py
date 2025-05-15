@@ -5,14 +5,13 @@ import math
 import os
 import subprocess
 import pickle
+from constants import *
 
 # --- Init ---
 pygame.init()
 pygame.mixer.init()
 
-# Define the chunk directory path
-CHUNK_DIR = "chunks"
-
+# Delete all files inside the chunks directory
 def clear_chunk_files():
     if not os.path.exists(CHUNK_DIR):
         try:
@@ -51,17 +50,9 @@ def adjust_sprite_for_rare(sprite, rare_type):
     del pixel_array
     return new_sprite
 
-# Delete all files inside the chunks directory
 clear_chunk_files()
 
-SCALE = 2
-BASE_SCALE = 2
-MIN_SCALE = 1
-MAX_SCALE = 4
-
-TILE_SIZE = 32
-VIEW_WIDTH, VIEW_HEIGHT = 30, 30
-WIDTH, HEIGHT = VIEW_WIDTH * TILE_SIZE, VIEW_HEIGHT * TILE_SIZE
+# --- Screen Setup ---
 view_left = 0
 view_top = 0
 view_right = 0
@@ -74,154 +65,91 @@ explosions = []
 sparks = []
 hat_particles = []
 
-
 # --- Sounds ---
-sound_place_land = pygame.mixer.Sound("Assets/sound/place_land.wav")
-sound_plant_sapling = pygame.mixer.Sound("Assets/sound/plant_sapling.wav")
-sound_place_turret = pygame.mixer.Sound("Assets/sound/place_turret.wav")
+sound_place_land = pygame.mixer.Sound(SOUND_FILES["place_land"])
+sound_plant_sapling = pygame.mixer.Sound(SOUND_FILES["plant_sapling"])
+sound_place_turret = pygame.mixer.Sound(SOUND_FILES["place_turret"])
 
 # --- Music ---
-music_files = {
-    "morning": "Assets/music/Morning.wav",
-    "afternoon": "Assets/music/Afternoon.wav",
-    "night": "Assets/music/Night.wav",
-    "late_night": "Assets/music/Late_night.wav"
-}
-
-# Load and set up music
-pygame.mixer.music.set_volume(0.5) 
-
-# --- Colors ---
-BLUE = (50, 150, 255)
-GREEN = (50, 200, 50)
-DARK_GREEN = (50, 150, 50)
-BROWN = (139, 69, 19)
-DARK_GRAY = (80, 80, 80)
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-YELLOW = (255, 255, 0)
-RED = (255, 0, 0)
-ORANGE = (255, 165, 0)
-TAN = (210, 180, 140)
-LIGHT_GRAY = (200, 200, 200)
-
-RARE_PIRATE_TYPES = ["bridge_builder", "turret_breaker", "tanky", "speedy", "explosive"]
-RARE_TYPE_COLORS = {
-    "bridge_builder": pygame.Color(0, 255, 0),  # Green
-    "turret_breaker": pygame.Color(255, 255, 0),  # Yellow
-    "tanky": pygame.Color(128, 0, 128),  # Purple
-    "speedy": pygame.Color(0, 0, 255),  # Blue
-    "explosive": pygame.Color(255, 0, 0)  # Red
-}
-
-# --- Tile Types ---
-WATER, LAND, TREE, SAPLING, WALL, TURRET, BOAT_TILE, USED_LAND, LOOT, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, BOULDER, FISH, STEERING_WHEEL = range(14)
-
-# Approved tiles for movement
-MOVEMENT_TILES = (BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TURRET, BOULDER, STEERING_WHEEL)
-
-# Approved tiles for boat tile adjacency
-LAND_TILES = (BOAT_TILE, BOAT_TILE_STAGE_2, BOAT_TILE_STAGE_3, LAND, USED_LAND, LOOT, SAPLING, TREE, TURRET, BOULDER, STEERING_WHEEL)
+pygame.mixer.music.set_volume(MUSIC_VOLUME)
 
 # --- Load Tile Images ---
 tile_images = {
-    WATER: pygame.image.load("Assets/water.png").convert(),
-    LAND: pygame.image.load("Assets/land.png").convert(),
-    TREE: pygame.image.load("Assets/tree.png").convert_alpha(),
-    SAPLING: pygame.image.load("Assets/sapling.png").convert_alpha(),
-    WALL: pygame.image.load("Assets/wall.png").convert(),
-    TURRET: pygame.image.load("Assets/turret.png").convert_alpha(),
-    BOAT_TILE: pygame.image.load("Assets/boat_tile.png").convert(),
-    USED_LAND: pygame.image.load("Assets/used_land.png").convert(),
-    "UNDER_LAND": pygame.image.load("Assets/under_land.png").convert_alpha(),
-    "UNDER_WOOD": pygame.image.load("Assets/under_wood.png").convert_alpha(),
-    LOOT: pygame.image.load("Assets/loot.png").convert_alpha(),
-    BOAT_TILE_STAGE_2: pygame.image.load("Assets/boat_tile2.png").convert(),
-    BOAT_TILE_STAGE_3: pygame.image.load("Assets/boat_tile3.png").convert(),
-    "WALL_TOP": pygame.image.load("Assets/wall_top.png").convert(),
-    BOULDER: pygame.image.load("Assets/boulder.png").convert_alpha(),
-    "FISHING_ROD": pygame.image.load("Assets/fishing_rod.png").convert_alpha(),
-    FISH: pygame.image.load("Assets/fish.png").convert_alpha(),
-    "BOBBER": pygame.image.load("Assets/bobber.png").convert_alpha(),
-    "BOBBER2": pygame.image.load("Assets/bobber2.png").convert_alpha(),
-    "BOBBER3": pygame.image.load("Assets/bobber3.png").convert_alpha(),
-    "KRAKEN": pygame.transform.scale(pygame.image.load("Assets/kraken.png").convert_alpha(), (TILE_SIZE, TILE_SIZE)),
-    STEERING_WHEEL: pygame.image.load("Assets/steering_wheel.png").convert_alpha(),
-    "ARROW": pygame.image.load("Assets/arrow.png").convert_alpha(),  # Arrow for steering direction
+    WATER: pygame.image.load(TILE_IMAGE_FILES["WATER"]).convert(),
+    LAND: pygame.image.load(TILE_IMAGE_FILES["LAND"]).convert(),
+    TREE: pygame.image.load(TILE_IMAGE_FILES["TREE"]).convert_alpha(),
+    SAPLING: pygame.image.load(TILE_IMAGE_FILES["SAPLING"]).convert_alpha(),
+    WALL: pygame.image.load(TILE_IMAGE_FILES["WALL"]).convert(),
+    TURRET: pygame.image.load(TILE_IMAGE_FILES["TURRET"]).convert_alpha(),
+    BOAT_TILE: pygame.image.load(TILE_IMAGE_FILES["BOAT_TILE"]).convert(),
+    USED_LAND: pygame.image.load(TILE_IMAGE_FILES["USED_LAND"]).convert(),
+    "UNDER_LAND": pygame.image.load(TILE_IMAGE_FILES["UNDER_LAND"]).convert_alpha(),
+    "UNDER_WOOD": pygame.image.load(TILE_IMAGE_FILES["UNDER_WOOD"]).convert_alpha(),
+    LOOT: pygame.image.load(TILE_IMAGE_FILES["LOOT"]).convert_alpha(),
+    BOAT_TILE_STAGE_2: pygame.image.load(TILE_IMAGE_FILES["BOAT_TILE_STAGE_2"]).convert(),
+    BOAT_TILE_STAGE_3: pygame.image.load(TILE_IMAGE_FILES["BOAT_TILE_STAGE_3"]).convert(),
+    "WALL_TOP": pygame.image.load(TILE_IMAGE_FILES["WALL_TOP"]).convert(),
+    BOULDER: pygame.image.load(TILE_IMAGE_FILES["BOULDER"]).convert_alpha(),
+    "FISHING_ROD": pygame.image.load(TILE_IMAGE_FILES["FISHING_ROD"]).convert_alpha(),
+    FISH: pygame.image.load(TILE_IMAGE_FILES["FISH"]).convert_alpha(),
+    "BOBBER": pygame.image.load(TILE_IMAGE_FILES["BOBBER"]).convert_alpha(),
+    "BOBBER2": pygame.image.load(TILE_IMAGE_FILES["BOBBER2"]).convert_alpha(),
+    "BOBBER3": pygame.image.load(TILE_IMAGE_FILES["BOBBER3"]).convert_alpha(),
+    "KRAKEN": pygame.transform.scale(pygame.image.load(TILE_IMAGE_FILES["KRAKEN"]).convert_alpha(), (TILE_SIZE, TILE_SIZE)),
+    STEERING_WHEEL: pygame.image.load(TILE_IMAGE_FILES["STEERING_WHEEL"]).convert_alpha(),
+    "ARROW": pygame.image.load(TILE_IMAGE_FILES["ARROW"]).convert_alpha(),
 }
 
-player_fishing_image = pygame.image.load("Assets/player_fishing.png").convert_alpha()
+player_image = pygame.image.load(TILE_IMAGE_FILES["PLAYER"]).convert_alpha()
+player_fishing_image = pygame.image.load(TILE_IMAGE_FILES["PLAYER_FISHING"]).convert_alpha()
 fish_spawn_timer = 0
-fish_spawn_interval = 1000  # 1 second
 
-# Kraken-specific constants
-KRAKEN_SPAWN_CHANCE = 0.50  # 10% chance per night spawn cycle
-KRAKEN_MOVE_SPEED = 0.05  # Same as pirate ship speed
-KRAKEN_DESTROY_DELAY = 1000  # 1 second to destroy a boat tile
-KRAKEN_LIMIT = 3  # Maximum number of krakens allowed at once
-KRAKEN_DESPAWN_DELAY = 2000  # 2 seconds between kraken spawns
-
-water_frames = [
-    pygame.image.load("Assets/water.png").convert(),
-    pygame.image.load("Assets/water1.png").convert(),
-    pygame.image.load("Assets/water2.png").convert()
-]
+# --- Water Animation Frames ---
+water_frames = [pygame.image.load(frame).convert() for frame in WATER_FRAME_FILES]
 water_frame = 0
 water_frame_timer = 0
-water_frame_delay = 1200
 
-player_image = pygame.image.load("Assets/player.png").convert_alpha()
-
-# Load pirate sprites
-# Load base pirate (hatless) and level-specific pirates and hats
+# --- Load Pirate Sprites ---
 pirate_sprites = {
-    "base": pygame.image.load("Assets/pirate/pirate.png").convert_alpha()
+    "base": pygame.image.load(PIRATE_SPRITE_FILES["base"]).convert_alpha()
 }
-# Load normal sprites for levels 1-10
 for level in range(1, 11):
-    pirate_sprites[f"level_{level}"] = pygame.image.load(f"Assets/pirate/pirate{level}.png").convert_alpha()
-# Load rare sprites for base and each level/rare type combination
+    pirate_sprites[f"level_{level}"] = pygame.image.load(PIRATE_SPRITE_FILES[f"level_{level}"]).convert_alpha()
 for rare_type in RARE_PIRATE_TYPES:
     pirate_sprites[f"base_{rare_type}"] = adjust_sprite_for_rare(
-        pygame.image.load("Assets/pirate/pirate.png").convert_alpha(), rare_type
+        pygame.image.load(PIRATE_SPRITE_FILES["base"]).convert_alpha(), rare_type
     )
     for level in range(1, 11):
         pirate_sprites[f"level_{level}_{rare_type}"] = adjust_sprite_for_rare(
-            pygame.image.load(f"Assets/pirate/pirate{level}.png").convert_alpha(), rare_type
+            pygame.image.load(PIRATE_SPRITE_FILES[f"level_{level}"]).convert_alpha(), rare_type
         )
 
+# --- Load Pirate Hat Images ---
 pirate_hat_images = {
-    level: pygame.image.load(f"Assets/pirate/pirate_hat{level}.png").convert_alpha() for level in range(1, 11)
+    level: pygame.image.load(PIRATE_HAT_IMAGE_FILES[level]).convert_alpha() for level in range(1, 11)
 }
 
-
-# --- Pre Scale Images ---
-# Pre-scale static tile images to TILE_SIZE
+# --- Pre-Scale Images ---
 scaled_tile_images = {}
 for key, image in tile_images.items():
     scaled_tile_images[key] = pygame.transform.scale(image, (TILE_SIZE, TILE_SIZE))
 
-# Pre-scale water animation frames
 scaled_water_frames = [pygame.transform.scale(frame, (TILE_SIZE, TILE_SIZE)) for frame in water_frames]
-scaled_tile_images[WATER] = scaled_water_frames[water_frame]  # Set initial water frame
+scaled_tile_images[WATER] = scaled_water_frames[water_frame]
 
-# Pre-scale player images
 scaled_player_image = pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE))
 scaled_player_fishing_image = pygame.transform.scale(player_fishing_image, (TILE_SIZE, TILE_SIZE))
 
-# Pre-scale pirate sprites
 scaled_pirate_sprites = {}
 for key, sprite in pirate_sprites.items():
     scaled_pirate_sprites[key] = pygame.transform.scale(sprite, (TILE_SIZE, TILE_SIZE))
 
-# Pre-scale pirate hat images
 scaled_pirate_hat_images = {}
 for level, hat_image in pirate_hat_images.items():
     scaled_pirate_hat_images[level] = pygame.transform.scale(hat_image, (TILE_SIZE, TILE_SIZE))
 
-# Pre-scale NPC sprite
 scaled_waller_npc_sprite = pygame.transform.scale(
-    pygame.image.load("Assets/npc_waller.png").convert_alpha(), (TILE_SIZE, TILE_SIZE)
+    pygame.image.load(TILE_IMAGE_FILES["NPC_WALLER"]).convert_alpha(), (TILE_SIZE, TILE_SIZE)
 )
     
 
@@ -579,7 +507,7 @@ initialize_starting_area()
 
 # Start initial music
 current_music = get_music_period(game_time)
-pygame.mixer.music.load(music_files[current_music])
+pygame.mixer.music.load(MUSIC_FILES[current_music])
 pygame.mixer.music.play(-1)  # Loop indefinitely
 
 # --- Drawing ---
@@ -2820,7 +2748,7 @@ def update_music():
                 # Fade complete, switch to new music
                 music_fade_timer = 0
                 current_music = new_period
-                pygame.mixer.music.load(music_files[current_music])
+                pygame.mixer.music.load(MUSIC_FILES[current_music])
                 pygame.mixer.music.play(-1)  # Loop indefinitely
 
 # --- Game Loop ---
@@ -2862,7 +2790,7 @@ while running:
     update_player_xp_texts()
     update_hat_particles()
     water_frame_timer += dt
-    if water_frame_timer >= water_frame_delay:
+    if water_frame_timer >= WATER_FRAME_DELAY:
         water_frame = (water_frame + 1) % len(water_frames)
         water_frame_timer = 0
         scaled_tile_images[WATER] = scaled_water_frames[water_frame]
@@ -2898,7 +2826,7 @@ while running:
     update_fishing()
 
     fish_spawn_timer += dt
-    if fish_spawn_timer >= fish_spawn_interval:
+    if fish_spawn_timer >= FISH_SPAWN_INTERVAL:
         spawn_fish_tiles()
         fish_spawn_timer = 0    
 
