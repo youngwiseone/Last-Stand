@@ -130,9 +130,13 @@ scaled_pirate_hat_images = {}
 for level, hat_image in pirate_hat_images.items():
     scaled_pirate_hat_images[level] = pygame.transform.scale(hat_image, (TILE_SIZE, TILE_SIZE))
 
-scaled_waller_npc_sprite = pygame.transform.scale(
-    pygame.image.load(TILE_IMAGE_FILES["NPC_WALLER"]).convert_alpha(), (TILE_SIZE, TILE_SIZE)
-)
+npc_sprites = {}
+for npc_type, sprite_key in [
+    ("waller", "NPC_WALLER"),
+    ("trader", "NPC_TRADER")
+]:npc_sprites[npc_type] = pygame.transform.scale(
+        pygame.image.load(TILE_IMAGE_FILES[sprite_key]).convert_alpha(), (TILE_SIZE, TILE_SIZE)
+    )
     
 
 # Load high score
@@ -172,8 +176,8 @@ game_time = 28.0  # 6am is 24.0, 7am is 28.0, 8am is 32.0, etc.
 minimap_base_cache = None  # Cached base layer of the minimap (tiles only)
 minimap_cache_valid = False  # Flag to indicate if the cache needs to be updated
 last_player_chunk = world.player_chunk  # Track the last chunk to detect movement
-npc_manager = NPCManager(scaled_tile_images, scaled_waller_npc_sprite)
-trader_npc_spawned = False
+
+npc_manager = NPCManager(scaled_tile_images, npc_sprites)
 
 current_music = None  # Tracks the current music period ("morning", "afternoon", "night", "late_night")
 music_fade_timer = 0  # Timer for fading out music
@@ -1148,58 +1152,6 @@ def spawn_kraken():
         "last_search": 0,
         "search_cooldown": 500,  # Retain for consistency, though less critical now
         "despawn_timer": 0  # Timer for staying after failing to find a boat tile
-    })
-
-def spawn_waller_npc():
-    global npcs
-    # Find a water tile near the player to spawn the NPC ship
-    cx, cy = world.player_chunk
-    loaded_chunks = [(cx + dx, cy + dy) for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
-                     for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1) if (dx, dy) != (0, 0)]
-    water_tiles = []
-    for chunk_key in loaded_chunks:
-        if chunk_key in world.chunks:
-            chunk = world.chunks[chunk_key]
-            for ty in range(CHUNK_SIZE):
-                for tx in range(CHUNK_SIZE):
-                    if chunk[ty][tx] == Tile.WATER:
-                        world_x, world_y = world.chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
-                        water_tiles.append((world_x, world_y))
-    if not water_tiles:
-        print("No water tiles available for NPC spawning!")
-        return
-    x, y = random.choice(water_tiles)
-
-    # Create a small ship (3 tiles)
-    ship_tiles = set()
-    frontier = [(x, y)]
-    block_count = 3
-    while len(ship_tiles) < block_count and frontier:
-        cx, cy = frontier.pop(0)
-        if (cx, cy) not in ship_tiles and world.get_tile(cx, cy) == Tile.WATER:
-            ship_tiles.add((cx, cy))
-            neighbors = [(cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1)]
-            random.shuffle(neighbors)
-            frontier.extend(neighbors)
-    ship_tiles = list(ship_tiles)
-    if not ship_tiles:
-        print("No connected water tiles for NPC ship!")
-        return
-
-    # NPC arrives on a boat, similar to pirates
-    dx = player_pos[0] - x
-    dy = player_pos[1] - y
-    length = max(abs(dx), abs(dy)) or 1
-    direction = (dx / length, dy / length)
-
-    npcs.append({
-        "x": x,
-        "y": y,
-        "dir": direction,
-        "state": "boat",
-        "ship": [{"x": sx, "y": sy} for sx, sy in ship_tiles],
-        "type": "waller",
-        "sprite": pygame.image.load("Assets/npc_waller.png").convert_alpha()
     })
 
 def update_pirates():
@@ -2420,11 +2372,13 @@ while running:
         fish_spawn_timer = 0    
 
     npc_manager.update(dt, world, player_pos)
-    if wood >= 50 and not npc_manager.waller_npc_spawned:
-        npc_manager.spawn_waller_npc(player_pos, VIEW_WIDTH, VIEW_HEIGHT)
-    if wood >= 100 and not trader_npc_spawned:  # Add for testing
-        npc_manager.spawn_trader_npc(player_pos, VIEW_WIDTH, VIEW_HEIGHT)
-        trader_npc_spawned = True
+    # NPC spawning:
+    game_state = {
+        "wood": wood,
+        "has_fishing_rod": has_fishing_rod,
+        "fish_caught": fish_caught
+    }
+    npc_manager.spawn_npcs(game_state, player_pos, VIEW_WIDTH, VIEW_HEIGHT)
 
     pirate_spawn_timer += dt
     t = game_time % 96

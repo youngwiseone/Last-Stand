@@ -24,15 +24,7 @@ class NPC(ABC):
 
     @abstractmethod
     def interact(self, game_state, world):
-        """Handle interaction with the NPC.
-
-        Args:
-            game_state (dict): Game variables (e.g., wood, has_fishing_rod).
-            world (World): Game world for tile operations.
-
-        Returns:
-            dict: Updated game state and wood_texts for feedback.
-        """
+        """Handle interaction with the NPC."""
         pass
 
 class WallerNPC(NPC):
@@ -72,7 +64,7 @@ class WallerNPC(NPC):
                 "timer": 1000,
                 "alpha": 255
             })
-        self.interaction_cooldown = pygame.time.get_ticks() + 3000  # 3s cooldown
+        self.interaction_cooldown = pygame.time.get_ticks() + 3000
         return {
             "wood": wood,
             "has_fishing_rod": has_fishing_rod,
@@ -91,7 +83,6 @@ class TraderNPC(NPC):
         wood_texts = []
         if wood >= 10:
             wood -= 10
-            # Find a nearby land tile to place loot
             neighbors = [(self.x + dx, self.y + dy) for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]]
             for nx, ny in neighbors:
                 if world.get_tile(int(nx), int(ny)) == Tile.LAND:
@@ -135,65 +126,71 @@ class TraderNPC(NPC):
             "wood_texts": wood_texts
         }
 
+# NPC Registry with sprite keys
+NPC_REGISTRY = [
+    {
+        "type": "waller",
+        "class": WallerNPC,
+        "sprite_key": "NPC_WALLER",
+        "spawn_conditions": {
+            "wood_threshold": 50,
+            "max_instances": 1
+        }
+    },
+    {
+        "type": "trader",
+        "class": TraderNPC,
+        "sprite_key": "NPC_TRADER",
+        "spawn_conditions": {
+            "wood_threshold": 100,
+            "max_instances": 1
+        }
+    }
+]
+
 class NPCManager:
-    def __init__(self, scaled_tile_images, scaled_waller_npc_sprite):
+    def __init__(self, scaled_tile_images, npc_sprites):
         """Initialize NPC manager with rendering assets."""
         self.npcs = []
-        self.waller_npc_spawned = False
         self.scaled_tile_images = scaled_tile_images
-        self.scaled_waller_npc_sprite = scaled_waller_npc_sprite
+        self.npc_sprites = npc_sprites  # Dictionary of NPC type to sprite
         self.now = pygame.time.get_ticks()
+        self.spawned_counts = {npc["type"]: 0 for npc in NPC_REGISTRY}
 
-    def spawn_waller_npc(self, player_pos, view_width, view_height):
-        """Spawn a waller NPC off-screen with a boat."""
-        if self.waller_npc_spawned:
-            return
-        buffer = 2
-        spawn_dist = view_width / 2 + buffer
-        angle = random.uniform(0, 2 * math.pi)
-        spawn_x = player_pos[0] + math.cos(angle) * spawn_dist
-        spawn_y = player_pos[1] + math.sin(angle) * spawn_dist
-        dx = player_pos[0] - spawn_x
-        dy = player_pos[1] - spawn_y
-        length = math.hypot(dx, dy) or 1
-        direction = [dx / length, dy / length]
-        npc = WallerNPC(spawn_x, spawn_y, direction=direction)
-        self.npcs.append(npc)
-        self.waller_npc_spawned = True
-
-    def spawn_trader_npc(self, player_pos, view_width, view_height):
-        """Spawn a trader NPC off-screen with a boat."""
-        buffer = 2
-        spawn_dist = view_width / 2 + buffer
-        angle = random.uniform(0, 2 * math.pi)
-        spawn_x = player_pos[0] + math.cos(angle) * spawn_dist
-        spawn_y = player_pos[1] + math.sin(angle) * spawn_dist
-        dx = player_pos[0] - spawn_x
-        dy = player_pos[1] - spawn_y
-        length = math.hypot(dx, dy) or 1
-        direction = [dx / length, dy / length]
-        npc = TraderNPC(spawn_x, spawn_y, direction=direction)
-        self.npcs.append(npc)
+    def spawn_npcs(self, game_state, player_pos, view_width, view_height):
+        """Spawn NPCs based on game state and registry conditions."""
+        wood = game_state["wood"]
+        for npc_config in NPC_REGISTRY:
+            npc_type = npc_config["type"]
+            npc_class = npc_config["class"]
+            conditions = npc_config["spawn_conditions"]
+            wood_threshold = conditions["wood_threshold"]
+            max_instances = conditions["max_instances"]
+            if (wood >= wood_threshold and
+                self.spawned_counts[npc_type] < max_instances):
+                buffer = 2
+                spawn_dist = view_width / 2 + buffer
+                angle = random.uniform(0, 2 * math.pi)
+                spawn_x = player_pos[0] + math.cos(angle) * spawn_dist
+                spawn_y = player_pos[1] + math.sin(angle) * spawn_dist
+                dx = player_pos[0] - spawn_x
+                dy = player_pos[1] - spawn_y
+                length = math.hypot(dx, dy) or 1
+                direction = [dx / length, dy / length]
+                npc = npc_class(spawn_x, spawn_y, direction=direction)
+                self.npcs.append(npc)
+                self.spawned_counts[npc_type] += 1
 
     def interact(self, x, y, game_state, world):
-        """Handle interaction with NPC at (x, y).
-
-        Args:
-            x, y (int): Tile coordinates.
-            game_state (dict): Game variables.
-            world (World): Game world.
-
-        Returns:
-            dict: Updated game state and wood_texts.
-        """
+        """Handle interaction with NPC at (x, y)."""
         self.now = pygame.time.get_ticks()
         for npc in self.npcs:
             if any(s["x"] == x and s["y"] == y for s in npc.ship) and self.now >= npc.interaction_cooldown:
                 return npc.interact(game_state, world)
-        return game_state | {"wood_texts": []}  # No NPC found, return unchanged state
+        return game_state | {"wood_texts": []}
 
     def update(self, dt, world, player_pos):
-        """Update all NPCs (movement, state transitions)."""
+        """Update all NPCs and remove dead ones."""
         self.now = pygame.time.get_ticks()
         for npc in self.npcs[:]:
             if self.now < npc.interaction_cooldown:
@@ -251,6 +248,7 @@ class NPCManager:
                             break
             if not npc.ship:
                 self.npcs.remove(npc)
+                self.spawned_counts[npc.type] -= 1
 
     def render(self, game_surface, top_left_x, top_left_y, darkness_factor, view_width, view_height):
         """Render NPCs on the game surface."""
@@ -275,11 +273,12 @@ class NPCManager:
                                 boat_tile_image.set_alpha(255)
                             game_surface.blit(boat_tile_image, (sx * TILE_SIZE, sy * TILE_SIZE))
                         if s["x"] == npc.x and s["y"] == npc.y:
-                            npc_image = self.scaled_waller_npc_sprite.copy()
+                            npc_image = self.npc_sprites.get(npc.type, self.npc_sprites["waller"]).copy()
                             if darkness_factor == 1.0:
                                 npc_image.set_alpha(alpha)
                             else:
                                 npc_image.set_alpha(255)
                             game_surface.blit(npc_image, (sx * TILE_SIZE, sy * TILE_SIZE))
                     elif npc.state == "docked":
-                        game_surface.blit(self.scaled_waller_npc_sprite, (sx * TILE_SIZE, sy * TILE_SIZE))
+                        npc_image = self.npc_sprites.get(npc.type, self.npc_sprites["waller"])
+                        game_surface.blit(npc_image, (sx * TILE_SIZE, sy * TILE_SIZE))

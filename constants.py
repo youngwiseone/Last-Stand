@@ -138,7 +138,8 @@ TILE_IMAGE_FILES = {
     "ARROW": "Assets/arrow.png",  # Image for steering direction arrow
     "PLAYER": "Assets/player.png",  # Image for player sprite
     "PLAYER_FISHING": "Assets/player_fishing.png",  # Image for player fishing sprite
-    "NPC_WALLER": "Assets/npc_waller.png"  # Image for waller NPC sprite
+    "NPC_WALLER": "Assets/npc_waller.png",  # Image for waller NPC sprite
+    "NPC_TRADER": "assets/npc_trader.png"  # Add Trader sprite
 }
 
 # --- Water Animation Frames ---
