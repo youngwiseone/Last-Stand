@@ -6,6 +6,7 @@ import os
 import subprocess
 import pickle
 from constants import *
+from world import World
 
 # --- Init ---
 pygame.init()
@@ -160,14 +161,6 @@ try:
 except:
     high_score = 0
 
-# --- Chunk System ---
-CHUNK_SIZE = 16  # Each chunk is 16x16 tiles
-VIEW_CHUNKS = 5  # Load a 5x5 chunk grid around the player
-
-chunks = {}  # Dictionary: {(cx, cy): [[tile]]}
-tile_cache = {}  # Dictionary: {(x, y): tile_type}
-player_chunk = (0, 0)  # Player's current chunk
-
 def get_speed_multiplier():
     """Calculate speed multiplier based on current SCALE relative to BASE_SCALE."""
     base_multiplier = SCALE / BASE_SCALE
@@ -186,231 +179,16 @@ def get_music_period(game_time):
     else:  # 4 <= t < 28
         return "late_night"  # 1am–7am
 
-def world_to_chunk(x, y):
-    """Convert world coordinates to chunk coordinates."""
-    return int(x) // CHUNK_SIZE, int(y) // CHUNK_SIZE
-
-def chunk_to_world(cx, cy, tx, ty):
-    """Convert chunk coordinates and tile offsets to world coordinates."""
-    return cx * CHUNK_SIZE + tx, cy * CHUNK_SIZE + ty
-
-def generate_chunk(cx, cy):
-    """Generate a new chunk with rarer, larger land masses, occasional trees, loot, and boulders."""
-    chunk = [[Tile.WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
-    total_tiles = CHUNK_SIZE * CHUNK_SIZE  # 256 tiles in a 16x16 chunk
-    target_land_tiles = int(total_tiles * 0.05)  # 5% land = ~13 tiles per chunk
-    min_mass_size = 8  # Increased from 5
-    max_mass_size = 20  # Increased from 15
-    land_tiles_placed = 0
-
-    # Keep generating land masses until we reach the target number of land tiles
-    while land_tiles_placed < target_land_tiles:
-        # Pick a random starting point that is water
-        available_positions = [(tx, ty) for ty in range(CHUNK_SIZE) for tx in range(CHUNK_SIZE) if chunk[ty][tx] == Tile.WATER]
-        if not available_positions:
-            break  # No more space for new land masses
-
-        start_x, start_y = random.choice(available_positions)
-        
-        # Calculate the remaining tiles needed
-        remaining_tiles = target_land_tiles - land_tiles_placed
-        
-        # Determine the size of this land mass
-        if remaining_tiles < min_mass_size:
-            mass_size = remaining_tiles  # Use the remaining tiles, even if less than min_mass_size
-        else:
-            mass_size = random.randint(min_mass_size, min(max_mass_size, remaining_tiles))
-        
-        if mass_size <= 0:
-            break  # No more tiles to place
-
-        # Use flood-fill to create a land mass
-        land_mass = set()
-        frontier = [(start_x, start_y)]
-        chunk[start_y][start_x] = Tile.LAND
-        land_mass.add((start_x, start_y))
-        land_tiles_placed += 1
-
-        while len(land_mass) < mass_size and frontier:
-            cx, cy = frontier.pop(0)
-            # Check neighboring tiles (up, down, left, right)
-            neighbors = [(cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1)]
-            random.shuffle(neighbors)  # Randomize to make shapes more natural
-            for nx, ny in neighbors:
-                if len(land_mass) >= mass_size:
-                    break
-                if (0 <= nx < CHUNK_SIZE and 0 <= ny < CHUNK_SIZE and
-                        chunk[ny][nx] == Tile.WATER and (nx, ny) not in land_mass):
-                    chunk[ny][nx] = Tile.LAND
-                    land_mass.add((nx, ny))
-                    frontier.append((nx, ny))
-                    land_tiles_placed += 1
-
-    # Add trees to some land tiles
-    tree_chance = 0.2  # 20% chance for a tree on each land tile
-    for ty in range(CHUNK_SIZE):
-        for tx in range(CHUNK_SIZE):
-            if chunk[ty][tx] == Tile.LAND and random.random() < tree_chance:
-                chunk[ty][tx] = Tile.TREE
-
-    # Add loot to some land tiles (rarer than trees)
-    loot_chance = 0.05  # 5% chance for loot on each land tile
-    for ty in range(CHUNK_SIZE):
-        for tx in range(CHUNK_SIZE):
-            if chunk[ty][tx] == Tile.LAND and random.random() < loot_chance:
-                chunk[ty][tx] = Tile.LOOT
-
-    # Add boulders to some land tiles (slightly rarer than loot)
-    boulder_chance = 0.03  # 3% chance for a boulder on each land tile
-    for ty in range(CHUNK_SIZE):
-        for tx in range(CHUNK_SIZE):
-            if chunk[ty][tx] == Tile.LAND and random.random() < boulder_chance:
-                chunk[ty][tx] = Tile.BOULDER
-
-    return chunk
-
-def save_chunk(cx, cy, chunk_data):
-    filename = f"{CHUNK_DIR}/chunk_{cx}_{cy}.pkl"
-    with open(filename, "wb") as f:
-        pickle.dump(chunk_data, f)
-
-def get_tile(x, y):
-    key = (x, y)
-    if key in tile_cache:
-        return tile_cache[key]
-    cx, cy = world_to_chunk(x, y)
-    tx = int(x % CHUNK_SIZE)  # Ensure integer
-    ty = int(y % CHUNK_SIZE)  # Ensure integer
-    if tx < 0: tx += CHUNK_SIZE
-    if ty < 0: ty += CHUNK_SIZE
-    if (cx, cy) not in chunks:
-        loaded_data = load_chunk(cx, cy)
-        if loaded_data is not None:
-            chunks[(cx, cy)] = loaded_data
-        else:
-            chunks[(cx, cy)] = generate_chunk(cx, cy)
-    tile = chunks[(cx, cy)][ty][tx]
-    tile_cache[key] = tile
-    return tile
-
-def set_tile(x, y, tile_type):
-    global minimap_cache_valid, chunks_version
-    cx, cy = world_to_chunk(x, y)
-    tx = int(x % CHUNK_SIZE)
-    ty = int(y % CHUNK_SIZE)
-    if tx < 0: tx += CHUNK_SIZE
-    if ty < 0: ty += CHUNK_SIZE
-    if (cx, cy) not in chunks:
-        loaded_data = load_chunk(cx, cy)
-        if loaded_data is not None:
-            chunks[(cx, cy)] = loaded_data
-        else:
-            chunks[(cx, cy)] = generate_chunk(cx, cy)
-    chunks[(cx, cy)][ty][tx] = tile_type
-    tile_cache[(x, y)] = tile_type
-    save_chunk(cx, cy, chunks[(cx, cy)])
-    minimap_cache_valid = False
-    chunks_version += 1
-
-# --- Initialize Starting Area ---
-def initialize_starting_area():
-    """Set up the initial 5x5 chunk area around (0, 0) with a varied, organic land patch."""
-    # Generate surrounding chunks
-    for cx in range(-2, 3):  # 5x5 chunk grid
-        for cy in range(-2, 3):
-            chunks[(cx, cy)] = generate_chunk(cx, cy)
-    
-    # Create a varied land mass centered at (0, 0)
-    target_land_tiles = random.randint(10, 16)  # 10–16 tiles for more variety
-    land_mass = set()
-    frontier = [(0, 0)]  # Start at origin
-    land_mass.add((0, 0))
-    set_tile(0, 0, Tile.LAND)  # Ensure origin is land
-    
-    # Flood-fill to create an organic land mass
-    while len(land_mass) < target_land_tiles and frontier:
-        cx, cy = frontier.pop(0)
-        # Check cardinal and diagonal neighbors for more varied shapes
-        neighbors = [
-            (cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1),  # Cardinal
-            (cx+1, cy+1), (cx+1, cy-1), (cx-1, cy+1), (cx-1, cy-1)  # Diagonal
-        ]
-        random.shuffle(neighbors)  # Randomize for natural shapes
-        for nx, ny in neighbors:
-            if len(land_mass) >= target_land_tiles:
-                break
-            # Constrain to a 5x5 area (-2 to 2) for more shape variety
-            if (abs(nx) <= 2 and abs(ny) <= 2 and
-                    (nx, ny) not in land_mass and
-                    get_tile(nx, ny) == Tile.WATER):
-                # Add some randomness to skip tiles for irregularity
-                if random.random() < 0.8:  # 80% chance to place land
-                    set_tile(nx, ny, Tile.LAND)
-                    land_mass.add((nx, ny))
-                    frontier.append((nx, ny))
-    
-    # Add features to make the starting area interesting
-    land_tiles = list(land_mass)
-    features_to_add = random.randint(1, 3)  # Add 1–3 features
-    random.shuffle(land_tiles)
-    for i in range(min(features_to_add, len(land_tiles))):
-        tx, ty = land_tiles[i]
-        feature = random.choices(
-            [Tile.TREE, Tile.LOOT, Tile.BOULDER],
-            weights=[0.6, 0.3, 0.1],  # 60% tree, 30% loot, 10% boulder
-            k=1
-        )[0]
-        set_tile(tx, ty, feature)
-
-def load_chunk(cx, cy):
-    filename = f"{CHUNK_DIR}/chunk_{cx}_{cy}.pkl"
-    if os.path.exists(filename):
-        with open(filename, "rb") as f:
-            return pickle.load(f)
-    return None  # Return None if the chunk doesn’t exist yet
-
-# --- Manage Chunks ---
-def update_player_chunk():
-    """Update the player's current chunk based on position."""
-    global player_chunk
-    player_chunk = world_to_chunk(player_pos[0], player_pos[1])
-
-def manage_chunks():
-    global minimap_cache_valid, chunks_version
-    cx, cy = player_chunk
-    loaded_chunks = set()
-    chunks_changed = False
-    for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
-        for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
-            chunk_key = (cx + dx, cy + dy)
-            loaded_chunks.add(chunk_key)
-            if chunk_key not in chunks:
-                loaded_data = load_chunk(cx + dx, cy + dy)
-                if loaded_data is not None:
-                    chunks[chunk_key] = loaded_data
-                else:
-                    chunks[chunk_key] = generate_chunk(cx + dx, cy + dy)
-                chunks_changed = True
-    for key in list(chunks.keys()):
-        if key not in loaded_chunks:
-            save_chunk(key[0], key[1], chunks[key])
-            cx, cy = key
-            for ty in range(CHUNK_SIZE):
-                for tx in range(CHUNK_SIZE):
-                    wx, wy = chunk_to_world(cx, cy, tx, ty)
-                    tile_cache.pop((wx, wy), None)
-            del chunks[key]
-            chunks_changed = True
-    if chunks_changed:
-        minimap_cache_valid = False
-        chunks_version += 1  # Increment version when chunks change
+# --- world Setup ---
+world = World()
+world.initialize_starting_area()
 
 # --- Game State ---
 selected_tile = None  # Will store the (x, y) of the tile under the mouse
 game_time = 28.0  # 6am is 24.0, 7am is 28.0, 8am is 32.0, etc.
 minimap_base_cache = None  # Cached base layer of the minimap (tiles only)
 minimap_cache_valid = False  # Flag to indicate if the cache needs to be updated
-last_player_chunk = player_chunk  # Track the last chunk to detect movement
+last_player_chunk = world.player_chunk  # Track the last chunk to detect movement
 chunks_version = 0  # Version counter for tracking changes to chunks
 last_chunks_version = 0  # Last version seen by the minimap
 
@@ -503,8 +281,6 @@ picked_boulder_pos = None  # Stores the position of the picked-up boulder
 
 game_surface = pygame.Surface((WIDTH, HEIGHT))
 
-initialize_starting_area()
-
 # Start initial music
 current_music = get_music_period(game_time)
 pygame.mixer.music.load(MUSIC_FILES[current_music])
@@ -527,7 +303,7 @@ def draw_grid():
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
-            if get_tile(gx, gy) in [Tile.TURRET, Tile.WALL]:
+            if world.get_tile(gx, gy) in [Tile.TURRET, Tile.WALL]:
                 light_source_tiles.add((gx, gy))
 
     player_tile = (int(player_pos[0] + 0.5), int(player_pos[1] + 0.5))
@@ -572,7 +348,7 @@ def draw_grid():
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
-            tile = get_tile(gx, gy)
+            tile = world.get_tile(gx, gy)
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
@@ -597,12 +373,12 @@ def draw_grid():
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
             below_y = gy + 1
-            below_tile = get_tile(gx, below_y)
+            below_tile = world.get_tile(gx, below_y)
             if below_tile == Tile.WATER:
                 px = (x - (top_left_x - start_x)) * TILE_SIZE
                 py = (y + 1 - (top_left_y - start_y)) * TILE_SIZE
                 under_rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-                tile = get_tile(gx, gy)
+                tile = world.get_tile(gx, gy)
                 if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT]:
                     under_land_image = scaled_tile_images.get("UNDER_LAND")
                     if under_land_image:
@@ -616,7 +392,7 @@ def draw_grid():
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
-            tile = get_tile(gx, gy)
+            tile = world.get_tile(gx, gy)
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
@@ -634,7 +410,7 @@ def draw_grid():
                         game_surface.blit(land_image, rect)
                 # Render the overlay image
                 if tile == Tile.WALL:
-                    below_tile = get_tile(gx, gy + 1)
+                    below_tile = world.get_tile(gx, gy + 1)
                     overlay_image = scaled_tile_images["WALL_TOP"] if below_tile == Tile.WALL else scaled_tile_images[Tile.WALL]
                 else:
                     overlay_image = scaled_tile_images.get(tile)
@@ -810,7 +586,7 @@ def draw_grid():
         sel_px = sel_x - top_left_x
         sel_py = sel_y - top_left_y
         if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
-            below_tile = get_tile(sel_x, sel_y + 1)
+            below_tile = world.get_tile(sel_x, sel_y + 1)
             wall_image = scaled_tile_images["WALL_TOP"] if below_tile == Tile.WALL else scaled_tile_images[Tile.WALL]
             wall_image = wall_image.copy()
             wall_image.set_alpha(128)
@@ -961,7 +737,7 @@ def draw_minimap():
     darkness_factor = get_darkness_factor(game_time)
 
     # Calculate the view area in world coordinates
-    cx, cy = player_chunk
+    cx, cy = world.player_chunk
     view_left = player_pos[0] - VIEW_WIDTH / 2.0
     view_right = player_pos[0] + VIEW_WIDTH / 2.0
     view_top = player_pos[1] - VIEW_HEIGHT / 2.0
@@ -974,18 +750,18 @@ def draw_minimap():
     top_left_world_y = top_left_chunk_y * CHUNK_SIZE
 
     # Check if the cache needs to be updated
-    if (not minimap_cache_valid or player_chunk != last_player_chunk or 
+    if (not minimap_cache_valid or world.player_chunk != last_player_chunk or 
         last_chunks_version != chunks_version):
         minimap_base_cache = pygame.Surface((minimap_size, minimap_size))
         for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
             for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
                 chunk_key = (cx + dx, cy + dy)
-                if chunk_key in chunks:
-                    chunk = chunks[chunk_key]
+                if chunk_key in world.chunks:
+                    chunk = world.chunks[chunk_key]
                     for my in range(CHUNK_SIZE):
                         for mx in range(CHUNK_SIZE):
                             tile = chunk[my][mx]
-                            world_x, world_y = chunk_to_world(cx + dx, cy + dy, mx, my)
+                            world_x, world_y = world.chunk_to_world(cx + dx, cy + dy, mx, my)
                             color = {
                                 Tile.WATER: BLUE,
                                 Tile.LAND: GREEN,
@@ -1006,7 +782,7 @@ def draw_minimap():
                                            (mx_map * minimap_scale, my_map * minimap_scale, 
                                             minimap_scale, minimap_scale))
         minimap_cache_valid = True
-        last_player_chunk = player_chunk
+        last_player_chunk = world.player_chunk
         last_chunks_version = chunks_version
 
     # Create the minimap surface by copying the base layer
@@ -1191,7 +967,7 @@ def is_on_land(pos):
     for cx, cy in corners:
         tile_x = math.floor(cx)
         tile_y = math.floor(cy)
-        if get_tile(tile_x, tile_y) not in MOVEMENT_TILES:
+        if world.get_tile(tile_x, tile_y) not in MOVEMENT_TILES:
             return False
     return True
 
@@ -1203,7 +979,7 @@ def find_connected_boat_tiles(start_x, start_y, max_depth=6):
         x, y, depth = frontier.pop(0)
         if (x, y) in visited or depth > max_depth:
             continue
-        tile = get_tile(x, y)
+        tile = world.get_tile(x, y)
         if tile in (Tile.BOAT, Tile.STEERING_WHEEL):  # Include STEERING_WHEEL
             visited.add((x, y))
             connected_tiles.append((x, y))
@@ -1232,13 +1008,13 @@ def update_land_spread():
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
-            tile = get_tile(gx, gy)
+            tile = world.get_tile(gx, gy)
             if tile == Tile.BOAT:
                 # Check cardinal neighbors for LAND
                 neighbors = [(gx, gy-1), (gx, gy+1), (gx-1, gy), (gx+1, gy)]
                 has_land = False
                 for nx, ny in neighbors:
-                    if get_tile(nx, ny) == Tile.LAND:
+                    if world.get_tile(nx, ny) == Tile.LAND:
                         has_land = True
                         break
                 if has_land and (gx, gy) not in land_spread:
@@ -1249,7 +1025,7 @@ def update_land_spread():
         data = land_spread[pos]
         gx, gy = pos
         # Check if the tile is still a BOAT_TILE or in a spreading stage
-        current_tile = get_tile(gx, gy)
+        current_tile = world.get_tile(gx, gy)
         if current_tile not in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3]:
             del land_spread[pos]  # Tile changed (e.g., player removed it)
             continue
@@ -1260,11 +1036,11 @@ def update_land_spread():
         if new_stage != data["stage"]:
             data["stage"] = new_stage
             if new_stage == 1:
-                set_tile(gx, gy, Tile.BOAT_STAGE_2)
+                world.set_tile(gx, gy, Tile.BOAT_STAGE_2)
             elif new_stage == 2:
-                set_tile(gx, gy, Tile.BOAT_STAGE_3)
+                world.set_tile(gx, gy, Tile.BOAT_STAGE_3)
             elif new_stage == 3:
-                set_tile(gx, gy, Tile.LAND)
+                world.set_tile(gx, gy, Tile.LAND)
                 del land_spread[pos]  # Conversion complete
 
 def spawn_fish_tiles():
@@ -1277,7 +1053,7 @@ def spawn_fish_tiles():
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
-            if get_tile(gx, gy) == Tile.FISH:
+            if world.get_tile(gx, gy) == Tile.FISH:
                 fish_count += 1
     if fish_count >= max_fish_tiles:
         return
@@ -1286,12 +1062,12 @@ def spawn_fish_tiles():
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = top_left_x + x, top_left_y + y
-            if get_tile(gx, gy) == Tile.WATER:
+            if world.get_tile(gx, gy) == Tile.WATER:
                 water_tiles.append((gx, gy))
     # Spawn a fish with 5% chance per second
     if water_tiles and random.random() < 0.05:
         x, y = random.choice(water_tiles)
-        set_tile(x, y, Tile.FISH)
+        world.set_tile(x, y, Tile.FISH)
         fish_tiles.append({"x": x, "y": y, "spawn_time": now})
 
 def update_fish_tiles():
@@ -1305,8 +1081,8 @@ def update_fish_tiles():
     # Revert expired fish tiles to WATER
     for fish in expired_fish:
         x, y = fish["x"], fish["y"]
-        if get_tile(x, y) == Tile.FISH:  # Ensure it’s still a FISH tile
-            set_tile(x, y, Tile.WATER)
+        if world.get_tile(x, y) == Tile.FISH:  # Ensure it’s still a FISH tile
+            world.set_tile(x, y, Tile.WATER)
 
 def spawn_pirate():
     global pirates
@@ -1322,17 +1098,17 @@ def spawn_pirate():
         pirate_levels.append(level)
         remaining -= 2 ** (level - 1)
 
-    cx, cy = player_chunk
+    cx, cy = world.player_chunk
     loaded_chunks = [(cx + dx, cy + dy) for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
                      for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1) if (dx, dy) != (0, 0)]
     water_tiles = []
     for chunk_key in loaded_chunks:
-        if chunk_key in chunks:
-            chunk = chunks[chunk_key]
+        if chunk_key in world.chunks:
+            chunk = world.chunks[chunk_key]
             for ty in range(CHUNK_SIZE):
                 for tx in range(CHUNK_SIZE):
                     if chunk[ty][tx] == Tile.WATER:
-                        world_x, world_y = chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
+                        world_x, world_y = world.chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
                         water_tiles.append((world_x, world_y))
     if not water_tiles:
         print("No water tiles available for spawning!")
@@ -1344,7 +1120,7 @@ def spawn_pirate():
     frontier = [(x, y)]
     while len(ship_tiles) < block_count and frontier:
         cx, cy = frontier.pop(0)
-        if (cx, cy) not in ship_tiles and get_tile(cx, cy) == Tile.WATER:
+        if (cx, cy) not in ship_tiles and world.get_tile(cx, cy) == Tile.WATER:
             ship_tiles.add((cx, cy))
             neighbors = [(cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1)]
             random.shuffle(neighbors)
@@ -1407,21 +1183,21 @@ def spawn_kraken():
     if random.random() > KRAKEN_SPAWN_CHANCE:
         return
     # Pick one random chunk from loaded chunks
-    cx, cy = player_chunk
+    cx, cy = world.player_chunk
     chunk_keys = [(cx + dx, cy + dy) for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
                   for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)]
     if not chunk_keys:
         return
     random_chunk_key = random.choice(chunk_keys)
-    if random_chunk_key not in chunks:
+    if random_chunk_key not in world.chunks:
         return
     # Check the selected chunk for boat tiles
-    chunk = chunks[random_chunk_key]
+    chunk = world.chunks[random_chunk_key]
     boat_tiles = []
     for ty in range(CHUNK_SIZE):
         for tx in range(CHUNK_SIZE):
-            world_x, world_y = chunk_to_world(random_chunk_key[0], random_chunk_key[1], tx, ty)
-            if get_tile(world_x, world_y) in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3]:
+            world_x, world_y = world.chunk_to_world(random_chunk_key[0], random_chunk_key[1], tx, ty)
+            if world.get_tile(world_x, world_y) in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3]:
                 boat_tiles.append((world_x, world_y))
     if not boat_tiles:
         return
@@ -1440,17 +1216,17 @@ def spawn_kraken():
 def spawn_waller_npc():
     global npcs
     # Find a water tile near the player to spawn the NPC ship
-    cx, cy = player_chunk
+    cx, cy = world.player_chunk
     loaded_chunks = [(cx + dx, cy + dy) for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
                      for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1) if (dx, dy) != (0, 0)]
     water_tiles = []
     for chunk_key in loaded_chunks:
-        if chunk_key in chunks:
-            chunk = chunks[chunk_key]
+        if chunk_key in world.chunks:
+            chunk = world.chunks[chunk_key]
             for ty in range(CHUNK_SIZE):
                 for tx in range(CHUNK_SIZE):
                     if chunk[ty][tx] == Tile.WATER:
-                        world_x, world_y = chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
+                        world_x, world_y = world.chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
                         water_tiles.append((world_x, world_y))
     if not water_tiles:
         print("No water tiles available for NPC spawning!")
@@ -1463,7 +1239,7 @@ def spawn_waller_npc():
     block_count = 3
     while len(ship_tiles) < block_count and frontier:
         cx, cy = frontier.pop(0)
-        if (cx, cy) not in ship_tiles and get_tile(cx, cy) == Tile.WATER:
+        if (cx, cy) not in ship_tiles and world.get_tile(cx, cy) == Tile.WATER:
             ship_tiles.add((cx, cy))
             neighbors = [(cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1)]
             random.shuffle(neighbors)
@@ -1517,15 +1293,15 @@ def update_pirates():
             landing_tile = None
             for s in p["ship"]:
                 sx, sy = int(s["x"]), int(s["y"])
-                if get_tile(sx, sy) != Tile.WATER:
+                if world.get_tile(sx, sy) != Tile.WATER:
                     landed = True
                     landing_tile = (sx, sy)
                     break
             if landed:
                 for s in p["ship"]:
                     sx, sy = int(round(s["x"])), int(round(s["y"]))
-                    if get_tile(sx, sy) == Tile.WATER:
-                        set_tile(sx, sy, Tile.BOAT)
+                    if world.get_tile(sx, sy) == Tile.WATER:
+                        world.set_tile(sx, sy, Tile.BOAT)
                 p["ship"] = []
                 p["state"] = "landed"
                 p["land_time"] = now
@@ -1589,7 +1365,7 @@ def update_pirates():
                             for x in range(-VIEW_WIDTH // 2, VIEW_WIDTH // 2 + 1):
                                 tx = int(pirate["x"]) + x
                                 ty = int(pirate["y"]) + y
-                                if get_tile(tx, ty) == Tile.TURRET:
+                                if world.get_tile(tx, ty) == Tile.TURRET:
                                     dist = math.hypot(tx - pirate["x"], ty - pirate["y"])
                                     if dist < min_dist:
                                         min_dist = dist
@@ -1605,7 +1381,7 @@ def update_pirates():
                     primary = (1 if dx > 0 else -1, 0) if abs(dx) > abs(dy) else (0, 1 if dy > 0 else -1)
                     alt = (0, 1 if dy > 0 else -1) if primary[0] != 0 else (1 if dx > 0 else -1, 0)
                     def can_walk(x, y):
-                        tile = get_tile(x, y)
+                        tile = world.get_tile(x, y)
                         if tile not in MOVEMENT_TILES:
                             return False
                         for other_p in pirates:
@@ -1615,11 +1391,11 @@ def update_pirates():
                         return True
                     moved = False
                     tx, ty = int(pirate["x"] + primary[0]), int(pirate["y"] + primary[1])
-                    if is_rare and rare_type == "bridge_builder" and get_tile(tx, ty) == Tile.WATER:
+                    if is_rare and rare_type == "bridge_builder" and world.get_tile(tx, ty) == Tile.WATER:
                         if has_adjacent_boat_or_land(tx, ty) and pirate.get("boat_tiles_placed", 0) < pirate["level"]:
-                            set_tile(tx, ty, Tile.BOAT)
+                            world.set_tile(tx, ty, Tile.BOAT)
                             pirate["boat_tiles_placed"] = pirate.get("boat_tiles_placed", 0) + 1
-                    if is_rare and rare_type == "turret_breaker" and get_tile(tx, ty) == Tile.TURRET:
+                    if is_rare and rare_type == "turret_breaker" and world.get_tile(tx, ty) == Tile.TURRET:
                         turret_pos = (tx, ty)
                         current_level = turret_levels.get(turret_pos, 1)
                         pirate_level = pirate["level"]
@@ -1630,7 +1406,7 @@ def update_pirates():
                                 turret_xp[turret_pos] = 0  # Reset XP when reduced to level 1
                         else:
                             # Turret is level 1 or would drop below 1, remove it
-                            set_tile(tx, ty, Tile.LAND)
+                            world.set_tile(tx, ty, Tile.LAND)
                             if turret_pos in turret_cooldowns:
                                 del turret_cooldowns[turret_pos]
                             if turret_pos in turret_levels:
@@ -1638,7 +1414,7 @@ def update_pirates():
                             if turret_pos in turret_xp:
                                 del turret_xp[turret_pos]
                         moved = True
-                    elif get_tile(tx, ty) == Tile.WALL:
+                    elif world.get_tile(tx, ty) == Tile.WALL:
                         wall_pos = (tx, ty)
                         last_damaged = wall_damage_timers.get(wall_pos, 0)
                         if now - last_damaged >= 1000:  # Damage every second
@@ -1646,7 +1422,7 @@ def update_pirates():
                             if current_level > 1:
                                 wall_levels[wall_pos] = current_level - 1
                             else:
-                                set_tile(tx, ty, Tile.BOULDER)
+                                world.set_tile(tx, ty, Tile.BOULDER)
                                 del wall_levels[wall_pos]
                                 if wall_pos in wall_damage_timers:
                                     del wall_damage_timers[wall_pos]
@@ -1660,11 +1436,11 @@ def update_pirates():
                         moved = True
                     else:
                         ax, ay = int(pirate["x"] + alt[0]), int(pirate["y"] + alt[1])
-                        if is_rare and rare_type == "bridge_builder" and get_tile(ax, ay) == Tile.WATER:
+                        if is_rare and rare_type == "bridge_builder" and world.get_tile(ax, ay) == Tile.WATER:
                             if has_adjacent_boat_or_land(ax, ay) and pirate.get("boat_tiles_placed", 0) < pirate["level"]:
-                                set_tile(ax, ay, Tile.BOAT)
+                                world.set_tile(ax, ay, Tile.BOAT)
                                 pirate["boat_tiles_placed"] = pirate.get("boat_tiles_placed", 0) + 1
-                        if is_rare and rare_type == "turret_breaker" and get_tile(ax, ay) == Tile.TURRET:
+                        if is_rare and rare_type == "turret_breaker" and world.get_tile(ax, ay) == Tile.TURRET:
                             turret_pos = (ax, ay)
                             current_level = turret_levels.get(turret_pos, 1)
                             pirate_level = pirate["level"]
@@ -1675,7 +1451,7 @@ def update_pirates():
                                     turret_xp[turret_pos] = 0  # Reset XP when reduced to level 1
                             else:
                                 # Turret is level 1 or would drop below 1, remove it
-                                set_tile(ax, ay, Tile.LAND)
+                                world.set_tile(ax, ay, Tile.LAND)
                                 if turret_pos in turret_cooldowns:
                                     del turret_cooldowns[turret_pos]
                                 if turret_pos in turret_levels:
@@ -1683,7 +1459,7 @@ def update_pirates():
                                 if turret_pos in turret_xp:
                                     del turret_xp[turret_pos]
                             moved = True
-                        elif get_tile(ax, ay) == Tile.WALL:
+                        elif world.get_tile(ax, ay) == Tile.WALL:
                             wall_pos = (ax, ay)
                             last_damaged = wall_damage_timers.get(wall_pos, 0)
                             if now - last_damaged >= 1000:  # Damage every second
@@ -1691,7 +1467,7 @@ def update_pirates():
                                 if current_level > 1:
                                     wall_levels[wall_pos] = current_level - 1
                                 else:
-                                    set_tile(ax, ay, Tile.BOULDER)
+                                    world.set_tile(ax, ay, Tile.BOULDER)
                                     del wall_levels[wall_pos]
                                     if wall_pos in wall_damage_timers:
                                         del wall_damage_timers[wall_pos]
@@ -1706,8 +1482,8 @@ def update_pirates():
                     if not moved:
                         for dx_try, dy_try in [primary, alt]:
                             cx, cy = int(pirate["x"] + dx_try), int(pirate["y"] + dy_try)
-                            if get_tile(cx, cy) == Tile.TREE:
-                                set_tile(cx, cy, Tile.LAND)
+                            if world.get_tile(cx, cy) == Tile.TREE:
+                                world.set_tile(cx, cy, Tile.LAND)
                                 break
             # Second pass: Handle Explosive pirate explosions
             pirates_to_remove = []
@@ -1721,8 +1497,8 @@ def update_pirates():
                         for dy in range(-1, 2):
                             for dx in range(-1, 2):
                                 tx, ty = px + dx, py + dy
-                                if get_tile(tx, ty) != Tile.WATER:
-                                    set_tile(tx, ty, Tile.WATER)
+                                if world.get_tile(tx, ty) != Tile.WATER:
+                                    world.set_tile(tx, ty, Tile.WATER)
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
                         pirates_to_remove.append(pirate)
                         pirates_killed += 1
@@ -1774,15 +1550,15 @@ def update_krakens():
                     pirates.remove(p)
 
                 # Destroy the boat tile
-                if get_tile(tx, ty) in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3]:
-                    set_tile(tx, ty, Tile.WATER)
+                if world.get_tile(tx, ty) in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3]:
+                    world.set_tile(tx, ty, Tile.WATER)
                     explosions.append({"x": tx, "y": ty, "timer": 500})
 
                 # Look for an adjacent boat tile
                 boat_tiles = []
                 for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                     nx, ny = int(kraken["x"]) + dx, int(kraken["y"]) + dy
-                    if get_tile(nx, ny) in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3]:
+                    if world.get_tile(nx, ny) in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3]:
                         boat_tiles.append((nx, ny))
                 if boat_tiles:
                     target_x, target_y = random.choice(boat_tiles)
@@ -1827,15 +1603,15 @@ def update_npcs():
             landing_tile = None
             for s in npc["ship"]:
                 sx, sy = int(s["x"]), int(s["y"])
-                if get_tile(sx, sy) != Tile.WATER:
+                if world.get_tile(sx, sy) != Tile.WATER:
                     landed = True
                     landing_tile = (sx, sy)
                     break
             if landed:
                 for s in npc["ship"]:
                     sx, sy = int(round(s["x"])), int(round(s["y"]))
-                    if get_tile(sx, sy) == Tile.WATER:
-                        set_tile(sx, sy, Tile.BOAT)
+                    if world.get_tile(sx, sy) == Tile.WATER:
+                        world.set_tile(sx, sy, Tile.BOAT)
                 npc["ship"] = [{"x": landing_tile[0], "y": landing_tile[1]}]
                 npc["state"] = "docked"
                 npc["x"], npc["y"] = landing_tile
@@ -1861,7 +1637,7 @@ def update_npcs():
                 random.shuffle(neighbors)
                 for dx, dy in neighbors:
                     tx, ty = int(npc["x"] + dx), int(npc["y"] + dy)
-                    if get_tile(tx, ty) in MOVEMENT_TILES:
+                    if world.get_tile(tx, ty) in MOVEMENT_TILES:
                         npc["start_x"] = npc["x"]
                         npc["start_y"] = npc["y"]
                         npc["target_x"] = tx
@@ -1877,7 +1653,7 @@ def update_turrets():
     for y in range(VIEW_HEIGHT + 2):
         for x in range(VIEW_WIDTH + 2):
             gx, gy = top_left_x + x, top_left_y + y
-            if get_tile(gx, gy) == Tile.TURRET:
+            if world.get_tile(gx, gy) == Tile.TURRET:
                 turret_pos = (gx, gy)
                 level = turret_levels.get(turret_pos, 1)
                 time_between_shots = BASE_TURRET_FIRE_RATE * (2 ** (-0.040816 * (level - 1)))
@@ -1943,10 +1719,10 @@ def update_projectiles():
                 "color": spark_color
             })
 
-        if get_tile(tile_x, tile_y) == Tile.TREE:
+        if world.get_tile(tile_x, tile_y) == Tile.TREE:
             projectiles.remove(proj)
             continue
-        if get_tile(tile_x, tile_y) == Tile.WALL:
+        if world.get_tile(tile_x, tile_y) == Tile.WALL:
             projectiles.remove(proj)
             continue
 
@@ -1996,11 +1772,11 @@ def update_projectiles():
                         # Check for rare pirate loot drop
                         if pirate.get("is_rare", False):
                             pirate_tile_x, pirate_tile_y = int(pirate["x"]), int(pirate["y"])
-                            tile_type = get_tile(pirate_tile_x, pirate_tile_y)
+                            tile_type = world.get_tile(pirate_tile_x, pirate_tile_y)
                             if (tile_type in MOVEMENT_TILES and 
                                 tile_type not in (Tile.WATER, Tile.BOAT, Tile.TURRET) and 
                                 random.random() < 0.33):
-                                set_tile(pirate_tile_x, pirate_tile_y, Tile.LOOT)
+                                world.set_tile(pirate_tile_x, pirate_tile_y, Tile.LOOT)
                         p["pirates"].remove(pirate)
                         pirates_killed += 1
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
@@ -2085,7 +1861,7 @@ def update_fishing():
     
     # Check if fish tile despawned
     fish_tile = next((fish for fish in fish_tiles if fish["x"] == bobber["target_x"] - 0.5 and fish["y"] == bobber["target_y"] - 0.5), None)
-    if not fish_tile or now - fish_tile["spawn_time"] >= fish_despawn_time or get_tile(fish_tile["x"], fish_tile["y"]) != Tile.FISH:
+    if not fish_tile or now - fish_tile["spawn_time"] >= fish_despawn_time or world.get_tile(fish_tile["x"], fish_tile["y"]) != Tile.FISH:
         fishing_state = None
         bobber = None
 
@@ -2172,7 +1948,7 @@ def has_adjacent_boat_or_land(x, y):
     # Check if the tile at (x, y) has a BOAT_TILE or LAND tile in cardinal directions.
     neighbors = [(x, y-1), (x, y+1), (x-1, y), (x+1, y)]  # Up, down, left, right
     for nx, ny in neighbors:
-        tile = get_tile(nx, ny)
+        tile = world.get_tile(nx, ny)
         if tile in LAND_TILES:
             return True
     return False
@@ -2191,7 +1967,7 @@ def interact(button):
     manhattan_dist = abs(x - player_tile_x) + abs(y - player_tile_y)
     if manhattan_dist > 3:
         return  # Block interactions if too far
-    tile = get_tile(x, y)
+    tile = world.get_tile(x, y)
     
     if button == 1:  # Left-click
         # Attack pirates
@@ -2222,11 +1998,11 @@ def interact(button):
                         # Drop loot for rare pirates
                         if pirate.get("is_rare", False):
                             pirate_tile_x, pirate_tile_y = int(pirate["x"]), int(pirate["y"])
-                            tile_type = get_tile(pirate_tile_x, pirate_tile_y)
+                            tile_type = world.get_tile(pirate_tile_x, pirate_tile_y)
                             if (tile_type in MOVEMENT_TILES and 
                                 tile_type not in (Tile.WATER, Tile.BOAT, Tile.TURRET) and 
                                 random.random() < 0.33):
-                                set_tile(pirate_tile_x, pirate_tile_y, Tile.LOOT)
+                                world.set_tile(pirate_tile_x, pirate_tile_y, Tile.LOOT)
                         # Award XP
                         xp_gained = pirate["xp_value"]
                         player_xp += xp_gained
@@ -2321,7 +2097,7 @@ def interact(button):
         if boulder_placement_mode:
             # Can only place on LAND or where the boulder was originally picked up
             if (tile == Tile.LAND or (x, y) == picked_boulder_pos):
-                set_tile(x, y, Tile.BOULDER)
+                world.set_tile(x, y, Tile.BOULDER)
                 boulder_placement_mode = False
                 picked_boulder_pos = None
                 interaction_ui["left_message"] = ""
@@ -2330,7 +2106,7 @@ def interact(button):
         # Handle wall placement
         if wall_placement_mode:
             if tile == Tile.LAND and wood >= 100:
-                set_tile(x, y, Tile.WALL)
+                world.set_tile(x, y, Tile.WALL)
                 wood -= 100
                 tiles_placed += 1
                 wall_levels[(x, y)] = 1  # Initialize wall at level 1
@@ -2338,7 +2114,7 @@ def interact(button):
             return
         # Pick up boulder
         if tile == Tile.BOULDER:
-            set_tile(x, y, Tile.LAND)  # Remove boulder from current position
+            world.set_tile(x, y, Tile.LAND)  # Remove boulder from current position
             boulder_placement_mode = True
             picked_boulder_pos = (x, y)  # Store original position
             interaction_ui["left_message"] = "Click a land tile to place the boulder\nRight click to cancel"
@@ -2352,8 +2128,8 @@ def interact(button):
                 offsets = [(tx - sx, ty - sy) for tx, ty in connected_tiles]
                 # Convert all connected tiles (including steering wheel) to water
                 for tx, ty in connected_tiles:
-                    set_tile(tx, ty, Tile.WATER)
-                set_tile(sx, sy, Tile.WATER)  # Ensure steering wheel tile is also water
+                    world.set_tile(tx, ty, Tile.WATER)
+                world.set_tile(sx, sy, Tile.WATER)  # Ensure steering wheel tile is also water
                 # Define boat entity with offsets
                 boat_entity = {"offsets": offsets}
                 in_boat_mode = True
@@ -2361,20 +2137,20 @@ def interact(button):
             return
         if tile == Tile.BOAT and wood >= 1:
             # Place steering wheel 
-            set_tile(x, y, Tile.STEERING_WHEEL)
+            world.set_tile(x, y, Tile.STEERING_WHEEL)
             wood -= 1 #TODO Update to correct cost later
             tiles_placed += 1                
             return
         # Place Boat Tile
         if tile == Tile.WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
-            set_tile(x, y, Tile.BOAT)
+            world.set_tile(x, y, Tile.BOAT)
             wood -= 3
             tiles_placed += 1
             sound_place_land.play()
         elif tile == Tile.LOOT:
             wood_gained = random.randint(5, 10)
             wood += wood_gained
-            set_tile(x, y, Tile.LAND)
+            world.set_tile(x, y, Tile.LAND)
             wood_texts.append({
                 "x": x,
                 "y": y,
@@ -2383,7 +2159,7 @@ def interact(button):
                 "alpha": 255
             })
         elif tile == Tile.TREE:
-            set_tile(x, y, Tile.LAND)
+            world.set_tile(x, y, Tile.LAND)
             wood_gained = random.randint(2, 4)
             wood += wood_gained
             wood_texts.append({
@@ -2394,7 +2170,7 @@ def interact(button):
                 "alpha": 255
             })
         elif tile == Tile.SAPLING:
-            set_tile(x, y, Tile.LAND)
+            world.set_tile(x, y, Tile.LAND)
             wood += 1
             if (x, y) in tree_growth:
                 del tree_growth[(x, y)]
@@ -2410,7 +2186,7 @@ def interact(button):
         if boulder_placement_mode:
             # Cancel boulder placement and return it to its original position
             if picked_boulder_pos:
-                set_tile(picked_boulder_pos[0], picked_boulder_pos[1], Tile.BOULDER)
+                world.set_tile(picked_boulder_pos[0], picked_boulder_pos[1], Tile.BOULDER)
             boulder_placement_mode = False
             picked_boulder_pos = None
             interaction_ui["left_message"] = ""
@@ -2423,7 +2199,7 @@ def interact(button):
             return
         # Convert boulder to wall or level up existing wall
         if tile == Tile.BOULDER and wood >= 5:
-            set_tile(x, y, Tile.WALL)
+            world.set_tile(x, y, Tile.WALL)
             wall_levels[(x, y)] = 1  # Start at level 1
             wood -= 5
             tiles_placed += 1
@@ -2440,11 +2216,11 @@ def interact(button):
             for offset in boat_entity["offsets"]:
                 tile_x = int(player_pos[0] + offset[0] + 0.5)
                 tile_y = int(player_pos[1] + offset[1] + 0.5)
-                set_tile(tile_x, tile_y, Tile.BOAT)
+                world.set_tile(tile_x, tile_y, Tile.BOAT)
             # Place steering wheel at player's current position
             steering_x = int(player_pos[0] + 0.5)
             steering_y = int(player_pos[1] + 0.5)
-            set_tile(steering_x, steering_y, Tile.STEERING_WHEEL)
+            world.set_tile(steering_x, steering_y, Tile.STEERING_WHEEL)
             in_boat_mode = False
             boat_entity = None
             return
@@ -2452,7 +2228,7 @@ def interact(button):
         if tile == Tile.TURRET:
             level = turret_levels.get(turret_pos, 1)
             refund = 3
-            set_tile(x, y, Tile.LAND)
+            world.set_tile(x, y, Tile.LAND)
             wood += refund
             turrets_placed = max(0, turrets_placed - 1)
             if turret_pos in turret_cooldowns:
@@ -2462,7 +2238,7 @@ def interact(button):
             if turret_pos in turret_xp:
                 del turret_xp[turret_pos]
         elif tile == Tile.LAND and wood >= 3:
-            set_tile(x, y, Tile.TURRET)
+            world.set_tile(x, y, Tile.TURRET)
             wood -= 3
             turrets_placed += 1
             turret_levels[turret_pos] = 1
@@ -2503,7 +2279,7 @@ def update_interaction_ui():
         return
 
     x, y = selected_tile
-    tile = get_tile(x, y)
+    tile = world.get_tile(x, y)
     interaction_ui["left_message"] = ""
     interaction_ui["right_message"] = ""
 
@@ -2599,8 +2375,8 @@ def plant_sapling():
     if not selected_tile:
         return
     x, y = selected_tile
-    if get_tile(x, y) == Tile.LAND and wood >= 1:
-        set_tile(x, y, Tile.SAPLING)
+    if world.get_tile(x, y) == Tile.LAND and wood >= 1:
+        world.set_tile(x, y, Tile.SAPLING)
         tree_growth[(x, y)] = pygame.time.get_ticks()
         wood -= 1
         sound_plant_sapling.play()
@@ -2609,11 +2385,11 @@ def update_trees():
     now = pygame.time.get_ticks()
     to_grow = [pos for pos, t in tree_growth.items() if now - t >= sapling_growth_time]
     for pos in to_grow:
-        set_tile(pos[0], pos[1], Tile.TREE)
+        world.set_tile(pos[0], pos[1], Tile.TREE)
         del tree_growth[pos]
 
 def update_player_movement():
-    global player_pos, facing, player_chunk, fishing_state, bobber, in_boat_mode, boat_entity
+    global player_pos, facing, fishing_state, bobber, in_boat_mode, boat_entity
     keys = pygame.key.get_pressed()
     
     # Initialize dx and dy at the start
@@ -2641,18 +2417,18 @@ def update_player_movement():
             for offset in boat_entity["offsets"]:
                 tile_x = int(new_x + offset[0] + 0.5)
                 tile_y = int(new_y + offset[1] + 0.5)
-                tile = get_tile(tile_x, tile_y)
+                tile = world.get_tile(tile_x, tile_y)
                 if tile not in (Tile.WATER, Tile.FISH):
                     can_move = False
                     break
             if can_move:
-                old_chunk = player_chunk
+                old_chunk = world.player_chunk
                 player_pos[0] = new_x
                 player_pos[1] = new_y
-                update_player_chunk()
-                new_chunk = player_chunk
+                world.update_player_chunk(player_pos)
+                new_chunk = world.player_chunk
                 if old_chunk != new_chunk:
-                    manage_chunks()
+                    world.manage_chunks(player_pos)
     else:
         base_speed = 0.15
         speed = base_speed * get_speed_multiplier()
@@ -2671,12 +2447,12 @@ def update_player_movement():
             facing = [dx, dy] if dx != 0 or dy != 0 else facing
         new_x, new_y = player_pos[0] + dx, player_pos[1] + dy
         if is_on_land((new_x, new_y)):
-            old_chunk = player_chunk
+            old_chunk = world.player_chunk
             player_pos[0], player_pos[1] = new_x, new_y
-            update_player_chunk()
-            new_chunk = player_chunk
+            world.update_player_chunk(player_pos)
+            new_chunk = world.player_chunk
             if old_chunk != new_chunk:
-                manage_chunks()
+                world.manage_chunks(player_pos)
 
 def update_player_xp_texts():
     for text in player_xp_texts[:]:
