@@ -7,6 +7,7 @@ import subprocess
 import pickle
 from constants import *
 from world import World
+from npc import NPCManager
 
 # --- Init ---
 pygame.init()
@@ -171,6 +172,8 @@ game_time = 28.0  # 6am is 24.0, 7am is 28.0, 8am is 32.0, etc.
 minimap_base_cache = None  # Cached base layer of the minimap (tiles only)
 minimap_cache_valid = False  # Flag to indicate if the cache needs to be updated
 last_player_chunk = world.player_chunk  # Track the last chunk to detect movement
+npc_manager = NPCManager(scaled_tile_images, scaled_waller_npc_sprite)
+trader_npc_spawned = False
 
 current_music = None  # Tracks the current music period ("morning", "afternoon", "night", "late_night")
 music_fade_timer = 0  # Timer for fading out music
@@ -253,9 +256,6 @@ pirate_walk_delay = 300
 wall_levels = {}
 wall_damage_timers = {}  # Track last time each wall was damaged
 
-npcs = []  # List to store NPCs
-waller_npc_spawned = False  # Flag to ensure NPC spawns only once
-wall_placement_mode = False  # Tracks if player is in wall placement mode
 boulder_placement_mode = False  # Tracks if player is in boulder placement mode
 picked_boulder_pos = None  # Stores the position of the picked-up boulder
 
@@ -300,10 +300,7 @@ def draw_grid():
                     b = 0.9 if dist == 0 else 0.6 if dist == 1 else 0.4 if dist == 2 else 0.2
                     brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], b)
 
-    for npc in npcs:
-        for s in npc["ship"]:
-            npc_tile = (int(s["x"] + 0.5), int(s["y"] + 0.5))
-            light_source_tiles.add(npc_tile)
+    npc_manager.render(game_surface, top_left_x, top_left_y, darkness_factor, VIEW_WIDTH, VIEW_HEIGHT)
 
     for sx, sy in light_source_tiles:
         local_x = sx - start_x
@@ -508,35 +505,7 @@ def draw_grid():
                 game_surface.blit(text, text_rect)
 
     # Render NPCs
-    for npc in npcs:
-        for s in npc["ship"]:
-            sx = s["x"] - top_left_x
-            sy = s["y"] - top_left_y
-            if darkness_factor == 1.0 and (
-                sx <= 1 or sx >= VIEW_WIDTH - 2 or sy <= 1 or sy >= VIEW_HEIGHT - 2
-            ):
-                continue
-            if 0 <= sx < VIEW_WIDTH and 0 <= sy < VIEW_HEIGHT:
-                if npc["state"] == "boat":
-                    boat_tile_image = scaled_tile_images.get(Tile.BOAT)
-                    if boat_tile_image:
-                        boat_tile_image = boat_tile_image.copy()
-                        if darkness_factor == 1.0:
-                            dist_to_edge = min(sx, VIEW_WIDTH - sx, sy, VIEW_HEIGHT - sy)
-                            alpha = 0 if dist_to_edge <= 2 else 255 if dist_to_edge >= 5 else int(255 * (dist_to_edge - 2) / (5 - 2))
-                            boat_tile_image.set_alpha(alpha)
-                        else:
-                            boat_tile_image.set_alpha(255)
-                        game_surface.blit(boat_tile_image, (sx * TILE_SIZE, sy * TILE_SIZE))
-                    if s["x"] == npc["x"] and s["y"] == npc["y"]:
-                        npc_image = scaled_waller_npc_sprite.copy()
-                        if darkness_factor == 1.0:
-                            npc_image.set_alpha(alpha)
-                        else:
-                            npc_image.set_alpha(255)
-                        game_surface.blit(npc_image, (sx * TILE_SIZE, sy * TILE_SIZE))
-                elif npc["state"] == "docked":
-                    game_surface.blit(scaled_waller_npc_sprite, (sx * TILE_SIZE, sy * TILE_SIZE))
+    npc_manager.render(game_surface, top_left_x, top_left_y, darkness_factor, VIEW_WIDTH, VIEW_HEIGHT)
 
     # Render krakens
     for kraken in krakens:
@@ -561,16 +530,6 @@ def draw_grid():
             overlay_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
             overlay_surface.fill(overlay_color)
             game_surface.blit(overlay_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
-    if wall_placement_mode and selected_tile:
-        sel_x, sel_y = selected_tile
-        sel_px = sel_x - top_left_x
-        sel_py = sel_y - top_left_y
-        if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
-            below_tile = world.get_tile(sel_x, sel_y + 1)
-            wall_image = scaled_tile_images["WALL_TOP"] if below_tile == Tile.WALL else scaled_tile_images[Tile.WALL]
-            wall_image = wall_image.copy()
-            wall_image.set_alpha(128)
-            game_surface.blit(wall_image, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
     if boulder_placement_mode and selected_tile:
         sel_x, sel_y = selected_tile
         sel_px = sel_x - top_left_x
@@ -805,8 +764,8 @@ def draw_minimap():
                 kraken_surface = pygame.Surface((minimap_scale, minimap_scale), pygame.SRCALPHA)
                 kraken_surface.fill((0, 0, 255, alpha))  # Blue for Kraken
                 minimap_surface.blit(kraken_surface, (int(mx), int(my)))
-    for npc in npcs:
-        world_x, world_y = npc["x"], npc["y"]
+    for npc in npc_manager.npcs:
+        world_x, world_y = npc.x, npc.y 
         is_in_view = (view_left <= world_x < view_right and view_top <= world_y < view_bottom)
         mx = (world_x - top_left_world_x) * minimap_scale
         my = (world_y - top_left_world_y) * minimap_scale
@@ -1561,69 +1520,6 @@ def update_krakens():
             if now - kraken["despawn_timer"] >= KRAKEN_DESPAWN_DELAY:
                 krakens.remove(kraken)
 
-def update_npcs():
-    global npcs
-    now = pygame.time.get_ticks()
-    for npc in npcs[:]:
-        # Check if NPC is in cooldown
-        if "interaction_cooldown" in npc and now < npc["interaction_cooldown"]:
-            continue  # Skip movement during cooldown
-        if npc["state"] == "boat":
-            if not npc["ship"]:
-                npcs.remove(npc)
-                continue
-            for s in npc["ship"]:
-                s["x"] += npc["dir"][0] * 0.05
-                s["y"] += npc["dir"][1] * 0.05
-            nx = npc["x"] + npc["dir"][0] * 0.05
-            ny = npc["y"] + npc["dir"][1] * 0.05
-            landed = False
-            landing_tile = None
-            for s in npc["ship"]:
-                sx, sy = int(s["x"]), int(s["y"])
-                if world.get_tile(sx, sy) != Tile.WATER:
-                    landed = True
-                    landing_tile = (sx, sy)
-                    break
-            if landed:
-                for s in npc["ship"]:
-                    sx, sy = int(round(s["x"])), int(round(s["y"]))
-                    if world.get_tile(sx, sy) == Tile.WATER:
-                        world.set_tile(sx, sy, Tile.BOAT)
-                npc["ship"] = [{"x": landing_tile[0], "y": landing_tile[1]}]
-                npc["state"] = "docked"
-                npc["x"], npc["y"] = landing_tile
-                npc["roam_timer"] = now
-                npc["move_progress"] = 1.0
-                npc["start_x"] = float(landing_tile[0])
-                npc["start_y"] = float(landing_tile[1])
-                npc["target_x"] = float(landing_tile[0])
-                npc["target_y"] = float(landing_tile[1])
-            else:
-                npc["x"], npc["y"] = nx, ny
-        elif npc["state"] == "docked":
-            # Roaming logic
-            if npc["move_progress"] < 1.0:
-                elapsed = dt
-                npc["move_progress"] = min(1.0, npc["move_progress"] + elapsed / 300)
-                npc["x"] = npc["start_x"] + (npc["target_x"] - npc["start_x"]) * npc["move_progress"]
-                npc["y"] = npc["start_y"] + (npc["target_y"] - npc["start_y"]) * npc["move_progress"]
-                npc["ship"][0]["x"] = npc["x"]
-                npc["ship"][0]["y"] = npc["y"]
-            if now - npc["roam_timer"] >= 1000 and npc["move_progress"] >= 1.0:
-                neighbors = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                random.shuffle(neighbors)
-                for dx, dy in neighbors:
-                    tx, ty = int(npc["x"] + dx), int(npc["y"] + dy)
-                    if world.get_tile(tx, ty) in MOVEMENT_TILES:
-                        npc["start_x"] = npc["x"]
-                        npc["start_y"] = npc["y"]
-                        npc["target_x"] = tx
-                        npc["target_y"] = ty
-                        npc["move_progress"] = 0.0
-                        npc["roam_timer"] = now
-                        break
-
 def update_turrets():
     now = pygame.time.get_ticks()
     top_left_x = int(player_pos[0] - VIEW_WIDTH // 2)
@@ -1932,10 +1828,7 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, wall_placement_mode, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode
-
-
-
+    global wood, tiles_placed, turrets_placed, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode
 
     if not selected_tile:
         return
@@ -1946,7 +1839,21 @@ def interact(button):
     if manhattan_dist > 3:
         return  # Block interactions if too far
     tile = world.get_tile(x, y)
-    
+
+    if button in (1, 3):  # Left or right click
+        # Check NPC interaction
+        game_state = {
+            "wood": wood,
+            "has_fishing_rod": has_fishing_rod,
+            "fish_caught": fish_caught
+        }
+        result = npc_manager.interact(x, y, game_state, world)
+        wood = result["wood"]
+        has_fishing_rod = result["has_fishing_rod"]
+        fish_caught = result["fish_caught"]
+        wood_texts.extend(result["wood_texts"])
+        if result["wood_texts"]:  # Only return if NPC was interacted with
+            return    
     if button == 1:  # Left-click
         # Attack pirates
         for p in pirates:
@@ -2006,40 +1913,6 @@ def interact(button):
                         pirates_killed += 1
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
                     return  # Exit after attacking
-        # Check if clicking the NPC
-        for npc in npcs:
-            if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
-                # Capture NPC's position at interaction
-                interaction_pos_x, interaction_pos_y = npc["x"], npc["y"]
-                if not has_fishing_rod and wood >= 50:
-                    has_fishing_rod = True
-                    wood -= 50
-                    wood_texts.append({
-                        "x": interaction_pos_x,
-                        "y": interaction_pos_y - 0.5,
-                        "text": "-50 Wood",  # Corrected from "-10 Wood" to match cost
-                        "timer": 1000,
-                        "alpha": 255
-                    })
-                    wood_texts.append({
-                        "x": interaction_pos_x,
-                        "y": interaction_pos_y - 0.5,
-                        "text": "",  # Empty text, using image instead
-                        "image_key": "FISHING_ROD",  # Use key instead of Surface
-                        "timer": 1000,
-                        "alpha": 255
-                    })
-                else:
-                    wood_texts.append({
-                        "x": interaction_pos_x,
-                        "y": interaction_pos_y - 0.5,
-                        "text": f"Fish Caught: {fish_caught}",
-                        "timer": 1000,
-                        "alpha": 255
-                    })
-                # Add interaction cooldown to pause NPC movement
-                npc["interaction_cooldown"] = pygame.time.get_ticks() + 3000  # 3 seconds
-                return
         # Interact with fish tile
         if tile == Tile.FISH and has_fishing_rod:
             fish_data = next((f for f in fish_tiles if f["x"] == x and f["y"] == y), None)
@@ -2080,15 +1953,6 @@ def interact(button):
                 picked_boulder_pos = None
                 interaction_ui["left_message"] = ""
                 interaction_ui["alpha"] = 0
-            return
-        # Handle wall placement
-        if wall_placement_mode:
-            if tile == Tile.LAND and wood >= 100:
-                world.set_tile(x, y, Tile.WALL)
-                wood -= 100
-                tiles_placed += 1
-                wall_levels[(x, y)] = 1  # Initialize wall at level 1
-                # Optionally keep mode active: wall_placement_mode = False
             return
         # Pick up boulder
         if tile == Tile.BOULDER:
@@ -2167,11 +2031,6 @@ def interact(button):
                 world.set_tile(picked_boulder_pos[0], picked_boulder_pos[1], Tile.BOULDER)
             boulder_placement_mode = False
             picked_boulder_pos = None
-            interaction_ui["left_message"] = ""
-            interaction_ui["alpha"] = 0
-            return
-        if wall_placement_mode:
-            wall_placement_mode = False
             interaction_ui["left_message"] = ""
             interaction_ui["alpha"] = 0
             return
@@ -2266,37 +2125,6 @@ def update_interaction_ui():
         interaction_ui["left_message"] = "Click a land tile to place the boulder\nRight click to cancel"
         interaction_ui["alpha"] = 255
         return
-
-    # Show NPC interaction message
-    for npc in npcs:
-        if npc["type"] == "waller" and any(s["x"] == x and s["y"] == y for s in npc["ship"]):
-            if not has_fishing_rod and wood >= 50:
-                has_fishing_rod = True
-                wood -= 50
-                wood_texts.append({
-                    "x": player_pos[0],
-                    "y": player_pos[1] - 0.5,
-                    "text": "-50 Wood",  # Corrected from "-10 Wood"
-                    "timer": 1000,
-                    "alpha": 255
-                })
-                wood_texts.append({
-                    "x": player_pos[0],
-                    "y": player_pos[1] - 0.5,
-                    "text": "",  # Empty text, using image instead
-                    "image_key": "FISHING_ROD",  # Use key instead of Surface
-                    "timer": 1000,
-                    "alpha": 255
-                })
-            else:
-                wood_texts.append({
-                    "x": player_pos[0],
-                    "y": player_pos[1] - 0.5,
-                    "text": f"Fish Caught: {fish_caught}",
-                    "timer": 1000,
-                    "alpha": 255
-                })
-            return
         
     # Show fish tile interaction
     if tile == Tile.FISH and has_fishing_rod:
@@ -2576,7 +2404,6 @@ while running:
     update_interaction_ui()
     update_pirates()
     update_krakens()
-    update_npcs()
     update_turrets()
     update_projectiles()
     update_fish_tiles()
@@ -2592,9 +2419,12 @@ while running:
         spawn_fish_tiles()
         fish_spawn_timer = 0    
 
-    if wood >= 50 and not waller_npc_spawned:
-        spawn_waller_npc()
-        waller_npc_spawned = True
+    npc_manager.update(dt, world, player_pos)
+    if wood >= 50 and not npc_manager.waller_npc_spawned:
+        npc_manager.spawn_waller_npc(player_pos, VIEW_WIDTH, VIEW_HEIGHT)
+    if wood >= 100 and not trader_npc_spawned:  # Add for testing
+        npc_manager.spawn_trader_npc(player_pos, VIEW_WIDTH, VIEW_HEIGHT)
+        trader_npc_spawned = True
 
     pirate_spawn_timer += dt
     t = game_time % 96
