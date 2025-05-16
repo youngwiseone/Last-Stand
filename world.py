@@ -5,42 +5,28 @@
 import pickle
 import random
 import os
+from abc import ABC, abstractmethod
 from constants import *
 from cachetools import LRUCache
 
-class World:
-    def __init__(self):
-        # Initialize the world with empty chunk storage and player state.
-        self.chunks = {}  # Dictionary: {(cx, cy): [[tile]]}
-        self.tile_cache = LRUCache(maxsize=10000)  # Cache up to 10,000 tiles
-        self.player_chunk = (0, 0)  # Player’s current chunk
-        self.dirty_chunks = set()  # Track chunks needing saving
+class ChunkGenerator(ABC):
+    """Base class for chunk generation strategies."""
+    @abstractmethod
+    def generate(self, cx, cy):
+        """Generate a chunk at coordinates (cx, cy).
 
-    def clear_chunk_files(self):
-        # Clear all chunk files in CHUNK_DIR, creating the directory if it doesn't exist.
-        if not os.path.exists(CHUNK_DIR):
-            try:
-                os.makedirs(CHUNK_DIR)
-            except OSError as e:
-                print(f"Error: Could not create chunk directory: {e}")
-                return
-        for filename in os.listdir(CHUNK_DIR):
-            file_path = os.path.join(CHUNK_DIR, filename)
-            try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-            except PermissionError as e:
-                print(f"Warning: Could not delete file {file_path} due to permission error: {e}")
-            except OSError as e:
-                print(f"Warning: Could not delete file {file_path}: {e}")
+        Args:
+            cx (int): Chunk x-coordinate.
+            cy (int): Chunk y-coordinate.
 
-    def world_to_chunk(self, x, y):
-        return int(x) // CHUNK_SIZE, int(y) // CHUNK_SIZE
+        Returns:
+            list: 2D list of tile types for the chunk.
+        """
+        pass
 
-    def chunk_to_world(self, cx, cy, tx, ty):
-        return cx * CHUNK_SIZE + tx, cy * CHUNK_SIZE + ty
-
-    def generate_chunk(self, cx, cy):
+class DefaultIslandGenerator(ChunkGenerator):
+    """Generates chunks with sparse land masses, trees, loot, and boulders."""
+    def generate(self, cx, cy):
         chunk = [[Tile.WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
         total_tiles = CHUNK_SIZE * CHUNK_SIZE
         target_land_tiles = int(total_tiles * LAND_FRACTION)
@@ -83,6 +69,142 @@ class World:
                 chunk[ty][tx] = Tile.BOULDER
 
         return chunk
+
+class RockyIslandGenerator(ChunkGenerator):
+    """Generates chunks with dense, rocky islands and minimal vegetation."""
+    def generate(self, cx, cy):
+        chunk = [[Tile.WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
+        total_tiles = CHUNK_SIZE * CHUNK_SIZE
+        target_land_tiles = int(total_tiles * 0.10)
+        land_tiles = []
+        land_tiles_placed = 0
+
+        while land_tiles_placed < target_land_tiles:
+            available_positions = [(tx, ty) for ty in range(CHUNK_SIZE) for tx in range(CHUNK_SIZE) if chunk[ty][tx] == Tile.WATER]
+            if not available_positions:
+                break
+            start_x, start_y = random.choice(available_positions)
+            mass_size = min(random.randint(10, 25), target_land_tiles - land_tiles_placed)
+            if mass_size <= 0:
+                break
+
+            x, y = start_x, start_y
+            for _ in range(mass_size):
+                if 0 <= x < CHUNK_SIZE and 0 <= y < CHUNK_SIZE and chunk[y][x] == Tile.WATER:
+                    chunk[y][x] = Tile.LAND
+                    land_tiles.append((x, y))
+                    land_tiles_placed += 1
+                directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+                random.shuffle(directions)
+                for dx, dy in directions:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < CHUNK_SIZE and 0 <= ny < CHUNK_SIZE and chunk[ny][nx] == Tile.WATER:
+                        x, y = nx, ny
+                        break
+                else:
+                    break
+
+        random.shuffle(land_tiles)
+        for i, (tx, ty) in enumerate(land_tiles):
+            r = random.random()
+            if r < 0.1:
+                chunk[ty][tx] = Tile.TREE
+            elif r < 0.3:
+                chunk[ty][tx] = Tile.BOULDER
+
+        return chunk
+    
+class ForestedIslandGenerator(ChunkGenerator):
+    """Generates chunks with dense, tree-covered islands."""
+    def generate(self, cx, cy):
+        chunk = [[Tile.WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
+        total_tiles = CHUNK_SIZE * CHUNK_SIZE
+        target_land_tiles = int(total_tiles * 0.08)  # 8% land
+        land_tiles = []
+        land_tiles_placed = 0
+
+        while land_tiles_placed < target_land_tiles:
+            available_positions = [(tx, ty) for ty in range(CHUNK_SIZE) for tx in range(CHUNK_SIZE) if chunk[ty][tx] == Tile.WATER]
+            if not available_positions:
+                break
+            start_x, start_y = random.choice(available_positions)
+            mass_size = min(random.randint(12, 30), target_land_tiles - land_tiles_placed)
+            if mass_size <= 0:
+                break
+
+            x, y = start_x, start_y
+            for _ in range(mass_size):
+                if 0 <= x < CHUNK_SIZE and 0 <= y < CHUNK_SIZE and chunk[y][x] == Tile.WATER:
+                    chunk[y][x] = Tile.LAND
+                    land_tiles.append((x, y))
+                    land_tiles_placed += 1
+                directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+                random.shuffle(directions)
+                for dx, dy in directions:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < CHUNK_SIZE and 0 <= ny < CHUNK_SIZE and chunk[ny][nx] == Tile.WATER:
+                        x, y = nx, ny
+                        break
+                else:
+                    break
+
+        random.shuffle(land_tiles)
+        for i, (tx, ty) in enumerate(land_tiles):
+            r = random.random()
+            if r < 0.5:  # 50% chance for trees
+                chunk[ty][tx] = Tile.TREE
+            elif r < 0.55:  # 5% chance for loot
+                chunk[ty][tx] = Tile.LOOT
+
+        return chunk
+
+class World:
+    def __init__(self):
+        # Initialize the world with empty chunk storage and player state.
+        self.chunks = {}  # Dictionary: {(cx, cy): [[tile]]}
+        self.tile_cache = LRUCache(maxsize=10000)  # Cache up to 10,000 tiles
+        self.player_chunk = (0, 0)  # Player’s current chunk
+        self.dirty_chunks = set()  # Track chunks needing saving
+        self.default_generator = DefaultIslandGenerator()
+        self.rocky_generator = RockyIslandGenerator()
+        self.forested_generator = ForestedIslandGenerator()
+        self.starting_generator = DefaultIslandGenerator()
+
+    def _select_generator(self, cx, cy):
+        value = (cx + cy) % 3
+        if value == 0:
+            return self.rocky_generator            
+        elif value == 1:
+            return self.forested_generator         
+        return self.default_generator
+
+    def clear_chunk_files(self):
+        # Clear all chunk files in CHUNK_DIR, creating the directory if it doesn't exist.
+        if not os.path.exists(CHUNK_DIR):
+            try:
+                os.makedirs(CHUNK_DIR)
+            except OSError as e:
+                print(f"Error: Could not create chunk directory: {e}")
+                return
+        for filename in os.listdir(CHUNK_DIR):
+            file_path = os.path.join(CHUNK_DIR, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except PermissionError as e:
+                print(f"Warning: Could not delete file {file_path} due to permission error: {e}")
+            except OSError as e:
+                print(f"Warning: Could not delete file {file_path}: {e}")
+
+    def world_to_chunk(self, x, y):
+        return int(x) // CHUNK_SIZE, int(y) // CHUNK_SIZE
+
+    def chunk_to_world(self, cx, cy, tx, ty):
+        return cx * CHUNK_SIZE + tx, cy * CHUNK_SIZE + ty
+
+    def generate_chunk(self, cx, cy):
+        generator = self._select_generator(cx, cy)
+        return generator.generate(cx, cy)
 
     def save_chunk(self, cx, cy, chunk_data):
         filename = os.path.join(CHUNK_DIR, f"chunk_{cx}_{cy}.pkl")
@@ -144,7 +266,7 @@ class World:
     def initialize_starting_area(self):
         for cx in range(-2, 3):
             for cy in range(-2, 3):
-                self.chunks[(cx, cy)] = self.generate_chunk(cx, cy)
+                self.chunks[(cx, cy)] = self.starting_generator.generate(cx, cy)
         
         target_land_tiles = random.randint(STARTING_AREA_LAND_MIN, STARTING_AREA_LAND_MAX)
         land_mass = set()
