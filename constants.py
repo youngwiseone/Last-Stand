@@ -8,6 +8,19 @@ from enum import IntEnum
 # --- Paths ---
 CHUNK_DIR = "chunks"  # Directory for storing chunk data files
 
+# --- Chunk generation settings ---
+LAND_FRACTION = 0.05  # 5% of chunk tiles are land
+MIN_LAND_MASS_SIZE = 8
+MAX_LAND_MASS_SIZE = 20
+TREE_CHANCE = 0.2
+LOOT_CHANCE = 0.05
+BOULDER_CHANCE = 0.03
+STARTING_AREA_LAND_MIN = 10
+STARTING_AREA_LAND_MAX = 16
+STARTING_AREA_FEATURES_MIN = 1
+STARTING_AREA_FEATURES_MAX = 3
+SAVE_CHUNK_INTERVAL = 5000
+
 # --- Scale Settings ---
 SCALE = 2  # Current scaling factor for game rendering (pixels per tile)
 BASE_SCALE = 2  # Default scaling factor for speed and rendering calculations

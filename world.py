@@ -6,10 +6,18 @@ import pickle
 import random
 import os
 from constants import *
+from cachetools import LRUCache
 
 class World:
+    def __init__(self):
+        # Initialize the world with empty chunk storage and player state.
+        self.chunks = {}  # Dictionary: {(cx, cy): [[tile]]}
+        self.tile_cache = LRUCache(maxsize=10000)  # Cache up to 10,000 tiles
+        self.player_chunk = (0, 0)  # Player’s current chunk
+        self.dirty_chunks = set()  # Track chunks needing saving
+
     def clear_chunk_files(self):
-        """Clear all chunk files in CHUNK_DIR, creating the directory if it doesn't exist."""
+        # Clear all chunk files in CHUNK_DIR, creating the directory if it doesn't exist.
         if not os.path.exists(CHUNK_DIR):
             try:
                 os.makedirs(CHUNK_DIR)
@@ -26,102 +34,75 @@ class World:
             except OSError as e:
                 print(f"Warning: Could not delete file {file_path}: {e}")
 
-    def __init__(self):
-        # Initialize chunk system state.
-        self.chunks = {}  # Dictionary: {(cx, cy): [[tile]]}
-        self.tile_cache = {}  # Dictionary: {(x, y): tile_type}
-        self.player_chunk = (0, 0)  # Player’s current chunk
-        self.minimap_cache_valid = False  # Flag for minimap cache validity
-        self.chunks_version = 0  # Version counter for tracking chunk changes
-
     def world_to_chunk(self, x, y):
-        # Convert world coordinates to chunk coordinates.
         return int(x) // CHUNK_SIZE, int(y) // CHUNK_SIZE
 
     def chunk_to_world(self, cx, cy, tx, ty):
-        # Convert chunk coordinates and tile offsets to world coordinates.
         return cx * CHUNK_SIZE + tx, cy * CHUNK_SIZE + ty
 
     def generate_chunk(self, cx, cy):
-        # Generate a new chunk with rarer, larger land masses, occasional trees, loot, and boulders.
         chunk = [[Tile.WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
-        total_tiles = CHUNK_SIZE * CHUNK_SIZE  # 256 tiles in a 16x16 chunk
-        target_land_tiles = int(total_tiles * 0.05)  # 5% land = ~13 tiles per chunk
-        min_mass_size = 8
-        max_mass_size = 20
+        total_tiles = CHUNK_SIZE * CHUNK_SIZE
+        target_land_tiles = int(total_tiles * LAND_FRACTION)
+        land_tiles = []
         land_tiles_placed = 0
 
-        # Generate land masses until target is reached
         while land_tiles_placed < target_land_tiles:
             available_positions = [(tx, ty) for ty in range(CHUNK_SIZE) for tx in range(CHUNK_SIZE) if chunk[ty][tx] == Tile.WATER]
             if not available_positions:
                 break
             start_x, start_y = random.choice(available_positions)
-            remaining_tiles = target_land_tiles - land_tiles_placed
-            mass_size = remaining_tiles if remaining_tiles < min_mass_size else random.randint(min_mass_size, min(max_mass_size, remaining_tiles))
+            mass_size = min(random.randint(MIN_LAND_MASS_SIZE, MAX_LAND_MASS_SIZE), target_land_tiles - land_tiles_placed)
             if mass_size <= 0:
                 break
 
-            # Flood-fill to create land mass
-            land_mass = set()
-            frontier = [(start_x, start_y)]
-            chunk[start_y][start_x] = Tile.LAND
-            land_mass.add((start_x, start_y))
-            land_tiles_placed += 1
-
-            while len(land_mass) < mass_size and frontier:
-                cx, cy = frontier.pop(0)
-                neighbors = [(cx+1, cy), (cx-1, cy), (cx, cy+1), (cx, cy-1)]
-                random.shuffle(neighbors)
-                for nx, ny in neighbors:
-                    if len(land_mass) >= mass_size:
+            x, y = start_x, start_y
+            for _ in range(mass_size):
+                if 0 <= x < CHUNK_SIZE and 0 <= y < CHUNK_SIZE and chunk[y][x] == Tile.WATER:
+                    chunk[y][x] = Tile.LAND
+                    land_tiles.append((x, y))
+                    land_tiles_placed += 1
+                directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+                random.shuffle(directions)
+                for dx, dy in directions:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < CHUNK_SIZE and 0 <= ny < CHUNK_SIZE and chunk[ny][nx] == Tile.WATER:
+                        x, y = nx, ny
                         break
-                    if (0 <= nx < CHUNK_SIZE and 0 <= ny < CHUNK_SIZE and
-                            chunk[ny][nx] == Tile.WATER and (nx, ny) not in land_mass):
-                        chunk[ny][nx] = Tile.LAND
-                        land_mass.add((nx, ny))
-                        frontier.append((nx, ny))
-                        land_tiles_placed += 1
+                else:
+                    break
 
-        # Add trees to some land tiles
-        tree_chance = 0.2
-        for ty in range(CHUNK_SIZE):
-            for tx in range(CHUNK_SIZE):
-                if chunk[ty][tx] == Tile.LAND and random.random() < tree_chance:
-                    chunk[ty][tx] = Tile.TREE
-
-        # Add loot to some land tiles
-        loot_chance = 0.05
-        for ty in range(CHUNK_SIZE):
-            for tx in range(CHUNK_SIZE):
-                if chunk[ty][tx] == Tile.LAND and random.random() < loot_chance:
-                    chunk[ty][tx] = Tile.LOOT
-
-        # Add boulders to some land tiles
-        boulder_chance = 0.03
-        for ty in range(CHUNK_SIZE):
-            for tx in range(CHUNK_SIZE):
-                if chunk[ty][tx] == Tile.LAND and random.random() < boulder_chance:
-                    chunk[ty][tx] = Tile.BOULDER
+        random.shuffle(land_tiles)
+        for i, (tx, ty) in enumerate(land_tiles):
+            r = random.random()
+            if r < TREE_CHANCE:
+                chunk[ty][tx] = Tile.TREE
+            elif r < TREE_CHANCE + LOOT_CHANCE:
+                chunk[ty][tx] = Tile.LOOT
+            elif r < TREE_CHANCE + LOOT_CHANCE + BOULDER_CHANCE:
+                chunk[ty][tx] = Tile.BOULDER
 
         return chunk
 
     def save_chunk(self, cx, cy, chunk_data):
-        # Save chunk data to a file.
-        filename = f"{CHUNK_DIR}/chunk_{cx}_{cy}.pkl"
-        with open(filename, "wb") as f:
-            pickle.dump(chunk_data, f)
+        filename = os.path.join(CHUNK_DIR, f"chunk_{cx}_{cy}.pkl")
+        try:
+            with open(filename, "wb") as f:
+                pickle.dump(chunk_data, f)
+        except (OSError, pickle.PicklingError) as e:
+            print(f"Error saving chunk ({cx}, {cy}): {e}")
 
     def load_chunk(self, cx, cy):
-        # Load chunk data from a file, or return None if it doesn’t exist.
-        filename = f"{CHUNK_DIR}/chunk_{cx}_{cy}.pkl"
-        if os.path.exists(filename):
-            with open(filename, "rb") as f:
-                return pickle.load(f)
+        filename = os.path.join(CHUNK_DIR, f"chunk_{cx}_{cy}.pkl")
+        try:
+            if os.path.exists(filename):
+                with open(filename, "rb") as f:
+                    return pickle.load(f)
+        except (OSError, pickle.UnpicklingError) as e:
+            print(f"Error loading chunk ({cx}, {cy}): {e}")
         return None
 
     def get_tile(self, x, y):
-        # Get the tile type at world coordinates (x, y), loading or generating chunks as needed.
         key = (x, y)
         if key in self.tile_cache:
             return self.tile_cache[key]
@@ -134,16 +115,12 @@ class World:
             ty += CHUNK_SIZE
         if (cx, cy) not in self.chunks:
             loaded_data = self.load_chunk(cx, cy)
-            if loaded_data is not None:
-                self.chunks[(cx, cy)] = loaded_data
-            else:
-                self.chunks[(cx, cy)] = self.generate_chunk(cx, cy)
+            self.chunks[(cx, cy)] = loaded_data if loaded_data is not None else self.generate_chunk(cx, cy)
         tile = self.chunks[(cx, cy)][ty][tx]
         self.tile_cache[key] = tile
         return tile
 
     def set_tile(self, x, y, tile_type):
-        # Set the tile type at world coordinates (x, y) and update cache and chunk data.
         cx, cy = self.world_to_chunk(x, y)
         tx = int(x % CHUNK_SIZE)
         ty = int(y % CHUNK_SIZE)
@@ -153,23 +130,23 @@ class World:
             ty += CHUNK_SIZE
         if (cx, cy) not in self.chunks:
             loaded_data = self.load_chunk(cx, cy)
-            if loaded_data is not None:
-                self.chunks[(cx, cy)] = loaded_data
-            else:
-                self.chunks[(cx, cy)] = self.generate_chunk(cx, cy)
+            self.chunks[(cx, cy)] = loaded_data if loaded_data is not None else self.generate_chunk(cx, cy)
         self.chunks[(cx, cy)][ty][tx] = tile_type
         self.tile_cache[(x, y)] = tile_type
-        self.save_chunk(cx, cy, self.chunks[(cx, cy)])
-        self.minimap_cache_valid = False
-        self.chunks_version += 1
+        self.dirty_chunks.add((cx, cy))
+
+    def save_dirty_chunks(self):
+        for cx, cy in self.dirty_chunks:
+            if (cx, cy) in self.chunks:
+                self.save_chunk(cx, cy, self.chunks[(cx, cy)])
+        self.dirty_chunks.clear()
 
     def initialize_starting_area(self):
-        # Set up the initial 5x5 chunk area around (0, 0) with a varied, organic land patch.
         for cx in range(-2, 3):
             for cy in range(-2, 3):
                 self.chunks[(cx, cy)] = self.generate_chunk(cx, cy)
         
-        target_land_tiles = random.randint(10, 16)
+        target_land_tiles = random.randint(STARTING_AREA_LAND_MIN, STARTING_AREA_LAND_MAX)
         land_mass = set()
         frontier = [(0, 0)]
         land_mass.add((0, 0))
@@ -194,7 +171,7 @@ class World:
                         frontier.append((nx, ny))
         
         land_tiles = list(land_mass)
-        features_to_add = random.randint(1, 3)
+        features_to_add = random.randint(STARTING_AREA_FEATURES_MIN, STARTING_AREA_FEATURES_MAX)
         random.shuffle(land_tiles)
         for i in range(min(features_to_add, len(land_tiles))):
             tx, ty = land_tiles[i]
@@ -206,35 +183,26 @@ class World:
             self.set_tile(tx, ty, feature)
 
     def update_player_chunk(self, player_pos):
-        # Update the player’s current chunk based on their position.
         self.player_chunk = self.world_to_chunk(player_pos[0], player_pos[1])
 
-    def manage_chunks(self, player_pos):
-        # Load and unload chunks around the player based on their position.
+    def manage_chunks(self):
         cx, cy = self.player_chunk
         loaded_chunks = set()
-        chunks_changed = False
         for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
             for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
                 chunk_key = (cx + dx, cy + dy)
                 loaded_chunks.add(chunk_key)
                 if chunk_key not in self.chunks:
                     loaded_data = self.load_chunk(cx + dx, cy + dy)
-                    if loaded_data is not None:
-                        self.chunks[chunk_key] = loaded_data
-                    else:
-                        self.chunks[chunk_key] = self.generate_chunk(cx + dx, cy + dy)
-                    chunks_changed = True
+                    self.chunks[chunk_key] = loaded_data if loaded_data is not None else self.generate_chunk(cx + dx, cy + dy)
         for key in list(self.chunks.keys()):
             if key not in loaded_chunks:
-                self.save_chunk(key[0], key[1], self.chunks[key])
+                if key in self.dirty_chunks:
+                    self.save_chunk(key[0], key[1], self.chunks[key])
+                self.dirty_chunks.discard(key)
                 cx, cy = key
                 for ty in range(CHUNK_SIZE):
                     for tx in range(CHUNK_SIZE):
                         wx, wy = self.chunk_to_world(cx, cy, tx, ty)
                         self.tile_cache.pop((wx, wy), None)
                 del self.chunks[key]
-                chunks_changed = True
-        if chunks_changed:
-            self.minimap_cache_valid = False
-            self.chunks_version += 1

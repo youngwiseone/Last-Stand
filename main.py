@@ -165,13 +165,12 @@ world.clear_chunk_files()
 world.initialize_starting_area()
 
 # --- Game State ---
+save_chunk_timer = 0
 selected_tile = None  # Will store the (x, y) of the tile under the mouse
 game_time = 28.0  # 6am is 24.0, 7am is 28.0, 8am is 32.0, etc.
 minimap_base_cache = None  # Cached base layer of the minimap (tiles only)
 minimap_cache_valid = False  # Flag to indicate if the cache needs to be updated
 last_player_chunk = world.player_chunk  # Track the last chunk to detect movement
-chunks_version = 0  # Version counter for tracking changes to chunks
-last_chunks_version = 0  # Last version seen by the minimap
 
 current_music = None  # Tracks the current music period ("morning", "afternoon", "night", "late_night")
 music_fade_timer = 0  # Timer for fading out music
@@ -712,7 +711,7 @@ def draw_ui():
 
 def draw_minimap():
     """Simplified minimap showing nearby chunks, with nighttime visibility limited to view distance."""
-    global minimap_base_cache, minimap_cache_valid, last_player_chunk, last_chunks_version
+    global minimap_base_cache, minimap_cache_valid, last_player_chunk
     minimap_scale = 3
     minimap_size = VIEW_CHUNKS * CHUNK_SIZE * minimap_scale
     darkness_factor = get_darkness_factor(game_time)
@@ -731,8 +730,7 @@ def draw_minimap():
     top_left_world_y = top_left_chunk_y * CHUNK_SIZE
 
     # Check if the cache needs to be updated
-    if (not minimap_cache_valid or world.player_chunk != last_player_chunk or 
-        last_chunks_version != chunks_version):
+    if (not minimap_cache_valid or world.player_chunk != last_player_chunk):
         minimap_base_cache = pygame.Surface((minimap_size, minimap_size))
         for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
             for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1):
@@ -764,7 +762,6 @@ def draw_minimap():
                                             minimap_scale, minimap_scale))
         minimap_cache_valid = True
         last_player_chunk = world.player_chunk
-        last_chunks_version = chunks_version
 
     # Create the minimap surface by copying the base layer
     minimap_surface = minimap_base_cache.copy()
@@ -2409,7 +2406,7 @@ def update_player_movement():
                 world.update_player_chunk(player_pos)
                 new_chunk = world.player_chunk
                 if old_chunk != new_chunk:
-                    world.manage_chunks(player_pos)
+                    world.manage_chunks()
     else:
         base_speed = 0.15
         speed = base_speed * get_speed_multiplier()
@@ -2433,7 +2430,7 @@ def update_player_movement():
             world.update_player_chunk(player_pos)
             new_chunk = world.player_chunk
             if old_chunk != new_chunk:
-                world.manage_chunks(player_pos)
+                world.manage_chunks()
 
 def update_player_xp_texts():
     for text in player_xp_texts[:]:
@@ -2518,17 +2515,20 @@ while running:
             fade_done = True
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                world.save_dirty_chunks()
                 world.clear_chunk_files()
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     pygame.mixer.music.stop()
+                    world.save_dirty_chunks()
                     world.clear_chunk_files()
                     pygame.quit()
                     sys.exit()
                 elif event.key == pygame.K_SPACE:
                     subprocess.Popen([sys.executable, os.path.abspath(__file__)])
+                    world.save_dirty_chunks()
                     world.clear_chunk_files()
                     pygame.quit()
                     sys.exit()
@@ -2581,6 +2581,11 @@ while running:
     update_projectiles()
     update_fish_tiles()
     update_fishing()
+
+    save_chunk_timer += dt
+    if save_chunk_timer >= SAVE_CHUNK_INTERVAL:
+        world.save_dirty_chunks()
+        save_chunk_timer = 0
 
     fish_spawn_timer += dt
     if fish_spawn_timer >= FISH_SPAWN_INTERVAL:
