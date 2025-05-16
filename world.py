@@ -8,6 +8,24 @@ import os
 from constants import *
 
 class World:
+    def clear_chunk_files(self):
+        """Clear all chunk files in CHUNK_DIR, creating the directory if it doesn't exist."""
+        if not os.path.exists(CHUNK_DIR):
+            try:
+                os.makedirs(CHUNK_DIR)
+            except OSError as e:
+                print(f"Error: Could not create chunk directory: {e}")
+                return
+        for filename in os.listdir(CHUNK_DIR):
+            file_path = os.path.join(CHUNK_DIR, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except PermissionError as e:
+                print(f"Warning: Could not delete file {file_path} due to permission error: {e}")
+            except OSError as e:
+                print(f"Warning: Could not delete file {file_path}: {e}")
+
     def __init__(self):
         # Initialize chunk system state.
         self.chunks = {}  # Dictionary: {(cx, cy): [[tile]]}

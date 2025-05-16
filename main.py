@@ -12,24 +12,6 @@ from world import World
 pygame.init()
 pygame.mixer.init()
 
-# Delete all files inside the chunks directory
-def clear_chunk_files():
-    if not os.path.exists(CHUNK_DIR):
-        try:
-            os.makedirs(CHUNK_DIR)
-        except OSError as e:
-            print(f"Error: Could not create chunk directory: {e}")
-            return
-    for filename in os.listdir(CHUNK_DIR):
-        file_path = os.path.join(CHUNK_DIR, filename)
-        try:
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-        except PermissionError as e:
-            print(f"Warning: Could not delete file {file_path} due to permission error: {e}")
-        except OSError as e:
-            print(f"Warning: Could not delete file {file_path}: {e}")
-
 def adjust_sprite_for_rare(sprite, rare_type):
     """Overlay a color specific to rare_type at 50% opacity, preserving alpha."""
     new_sprite = sprite.copy()
@@ -50,8 +32,6 @@ def adjust_sprite_for_rare(sprite, rare_type):
             pixel_array[x, y] = new_color
     del pixel_array
     return new_sprite
-
-clear_chunk_files()
 
 # --- Screen Setup ---
 view_left = 0
@@ -181,6 +161,7 @@ def get_music_period(game_time):
 
 # --- world Setup ---
 world = World()
+world.clear_chunk_files()
 world.initialize_starting_area()
 
 # --- Game State ---
@@ -2537,18 +2518,18 @@ while running:
             fade_done = True
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                clear_chunk_files()
+                world.clear_chunk_files()
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     pygame.mixer.music.stop()
-                    clear_chunk_files()
+                    world.clear_chunk_files()
                     pygame.quit()
                     sys.exit()
                 elif event.key == pygame.K_SPACE:
                     subprocess.Popen([sys.executable, os.path.abspath(__file__)])
-                    clear_chunk_files()
+                    world.clear_chunk_files()
                     pygame.quit()
                     sys.exit()
         continue
