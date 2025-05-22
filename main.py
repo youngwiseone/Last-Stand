@@ -178,6 +178,8 @@ minimap_cache_valid = False  # Flag to indicate if the cache needs to be updated
 last_player_chunk = world.player_chunk  # Track the last chunk to detect movement
 
 npc_manager = NPCManager(scaled_tile_images, npc_sprites)
+in_dialogue = False
+dialogue_box_state = None
 
 current_music = None  # Tracks the current music period ("morning", "afternoon", "night", "late_night")
 music_fade_timer = 0  # Timer for fading out music
@@ -984,6 +986,126 @@ def update_land_spread():
                 world.set_tile(gx, gy, Tile.LAND)
                 del land_spread[pos]  # Conversion complete
 
+# New dialogue box functions
+def dialogue_box(dialogue_manager):
+    """Initialize the dialogue box state."""
+    if not dialogue_manager.active or not dialogue_manager.current_tree:
+        print("Error: Cannot create dialogue box, no active dialogue")
+        return None
+    current_node = dialogue_manager.current_tree.get_node(dialogue_manager.current_node_id)
+    if not current_node:
+        print("Error: No current node for dialogue box")
+        return None
+    state = {
+        "rect": None,
+        "current_node": current_node,
+        "dialogue_manager": dialogue_manager,
+        "screen_width": 0,
+        "screen_height": 0,
+        "choice_rects": []  # Store clickable rectangles for choices
+    }
+    print("Dialogue box initialized")
+    return state
+
+def dialogue_box_render(screen, state):
+    """Render the dialogue box with text and choices."""
+    if not state or not state["current_node"]:
+        print("Warning: No dialogue box state to render")
+        return
+    font = pygame.font.SysFont(None, 28)
+    padding = 10
+    box_height = 150
+    state["screen_width"], state["screen_height"] = screen.get_size()
+    box_y = state["screen_height"] - box_height - 10
+    state["rect"] = pygame.Rect(10, box_y, state["screen_width"] - 20, box_height)
+
+    pygame.draw.rect(screen, (0, 0, 0, 200), state["rect"])
+    pygame.draw.rect(screen, (255, 255, 255), state["rect"], 2)
+
+    text_surface = font.render(state["current_node"].text, True, (255, 255, 255))
+    text_rect = text_surface.get_rect(topleft=(state["rect"].x + padding, state["rect"].y + padding))
+    screen.blit(text_surface, text_rect)
+
+    state["choice_rects"] = []
+    for i, (choice_text, _, _) in enumerate(state["current_node"].choices):
+        choice_surface = font.render(f"{i+1}. {choice_text}", True, (255, 255, 255))
+        choice_rect = choice_surface.get_rect(
+            topleft=(state["rect"].x + padding, state["rect"].y + padding + 30 + i * 30)
+        )
+        screen.blit(choice_surface, choice_rect)
+        state["choice_rects"].append(choice_rect)
+
+def dialogue_box_update(state, event):
+    """Update dialogue box based on input events."""
+    global wood, has_fishing_rod, fish_caught, wood_texts  # Declare at function start
+    if not state or not state["rect"]:
+        return False
+    dialogue_manager = state["dialogue_manager"]
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        mouse_x, mouse_y = event.pos
+        mouse_pos = (mouse_x, mouse_y)
+        for i, choice_rect in enumerate(state["choice_rects"]):
+            if choice_rect.collidepoint(mouse_pos):
+                dialogue_manager.advance_dialogue(i)
+                print(f"Selected choice {i + 1} via click")
+                # Sync game_state after choice
+                if dialogue_manager.game_state:
+                    game_state = dialogue_manager.game_state
+                    wood = game_state["wood"]
+                    has_fishing_rod = game_state["has_fishing_rod"]
+                    fish_caught = game_state["fish_caught"]
+                    wood_texts.extend(game_state["wood_texts"])
+                    print("Applied game_state after choice: "
+                          f"wood={wood}, has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
+                          f"wood_texts={wood_texts}")
+                else:
+                    print("Warning: dialogue_manager.game_state is None after choice")
+                state["current_node"] = dialogue_manager.current_tree.get_node(dialogue_manager.current_node_id) if dialogue_manager.current_tree else None
+                return True
+        if state["rect"].collidepoint(mouse_pos):
+            if not state["current_node"].choices:
+                dialogue_manager.advance_dialogue()
+                print("Advancing dialogue via click")
+                # Sync game_state after advance
+                if dialogue_manager.game_state:
+                    game_state = dialogue_manager.game_state
+                    wood = game_state["wood"]
+                    has_fishing_rod = game_state["has_fishing_rod"]
+                    fish_caught = game_state["fish_caught"]
+                    wood_texts.extend(game_state["wood_texts"])
+                    print("Applied game_state after advance: "
+                          f"wood={wood}, has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
+                          f"wood_texts={wood_texts}")
+                else:
+                    print("Warning: dialogue_manager.game_state is None after advance")
+            state["current_node"] = dialogue_manager.current_tree.get_node(dialogue_manager.current_node_id) if dialogue_manager.current_tree else None
+            return True
+        else:
+            dialogue_manager.end_dialogue()
+            print("Dialogue cancelled via click outside")
+            return True
+    elif event.type == pygame.KEYDOWN:
+        if event.key in [pygame.K_1, pygame.K_2, pygame.K_3]:
+            choice_index = {pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2}.get(event.key)
+            if choice_index < len(state["current_node"].choices):
+                dialogue_manager.advance_dialogue(choice_index)
+                print(f"Selected choice {choice_index + 1} via key")
+                # Sync game_state after choice
+                if dialogue_manager.game_state:
+                    game_state = dialogue_manager.game_state
+                    wood = game_state["wood"]
+                    has_fishing_rod = game_state["has_fishing_rod"]
+                    fish_caught = game_state["fish_caught"]
+                    wood_texts.extend(game_state["wood_texts"])
+                    print("Applied game_state after choice: "
+                          f"wood={wood}, has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
+                          f"wood_texts={wood_texts}")
+                else:
+                    print("Warning: dialogue_manager.game_state is None after choice")
+                state["current_node"] = dialogue_manager.current_tree.get_node(dialogue_manager.current_node_id) if dialogue_manager.current_tree else None
+                return True
+    return False
+
 def spawn_fish_tiles():
     """Spawn FISH tiles within draw distance, up to a maximum of 3."""
     now = pygame.time.get_ticks()
@@ -1781,7 +1903,8 @@ def has_adjacent_boat_or_land(x, y):
 
 def interact(button):
     global wood, tiles_placed, turrets_placed, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode
-
+    if in_dialogue:
+        return
     if not selected_tile:
         return
     x, y = selected_tile
@@ -1797,7 +1920,9 @@ def interact(button):
         game_state = {
             "wood": wood,
             "has_fishing_rod": has_fishing_rod,
-            "fish_caught": fish_caught
+            "fish_caught": fish_caught,
+            "world": world,
+            "wood_texts": []
         }
         result = npc_manager.interact(x, y, game_state, world)
         wood = result["wood"]
@@ -2349,17 +2474,27 @@ while running:
     screen.blit(scaled_surface, (blit_x, blit_y))
     draw_ui()
     draw_minimap()
+    # Render dialogue box
+    if in_dialogue and dialogue_box_state:
+        dialogue_box_render(screen, dialogue_box_state)
+
     pygame.display.flip()
 
-    update_trees()
-    update_land_spread()
-    update_interaction_ui()
-    update_pirates()
-    update_krakens()
-    update_turrets()
-    update_projectiles()
-    update_fish_tiles()
-    update_fishing()
+    # Update dialogue timeout
+    if in_dialogue:
+        npc_manager.dialogue_manager.check_timeout()
+
+    # Update game logic only if not in dialogue
+    if not in_dialogue:
+        update_trees()
+        update_land_spread()
+        update_interaction_ui()
+        update_pirates()
+        update_krakens()
+        update_turrets()
+        update_projectiles()
+        update_fish_tiles()
+        update_fishing()
 
     save_chunk_timer += dt
     if save_chunk_timer >= SAVE_CHUNK_INTERVAL:
@@ -2376,7 +2511,9 @@ while running:
     game_state = {
         "wood": wood,
         "has_fishing_rod": has_fishing_rod,
-        "fish_caught": fish_caught
+        "fish_caught": fish_caught,
+        "world": world,
+        "wood_texts": []
     }
     npc_manager.spawn_npcs(game_state, player_pos, VIEW_WIDTH, VIEW_HEIGHT)
 
@@ -2395,6 +2532,9 @@ while running:
                     f.write(str(score))
             running = False
         elif event.type == pygame.KEYDOWN:
+            if in_dialogue and dialogue_box_state:
+                if dialogue_box_update(dialogue_box_state, event):
+                    continue  # Skip other handlers if dialogue processes the event
             if event.key == pygame.K_ESCAPE:
                 running = False
             elif event.key == pygame.K_i:
@@ -2404,7 +2544,10 @@ while running:
                     interaction_ui["offset"] = 20
                     interaction_ui["fade_timer"] = 0
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button in [1, 3]:  # Left or right click
+            if in_dialogue and dialogue_box_state:
+                if dialogue_box_update(dialogue_box_state, event):
+                    continue  # Skip other handlers if dialogue processes the event
+            if event.button in [1, 3]:
                 interact(event.button)
         elif event.type == pygame.MOUSEWHEEL:
             if event.y > 0 and SCALE < MAX_SCALE:
@@ -2412,11 +2555,21 @@ while running:
             elif event.y < 0 and SCALE > MIN_SCALE:
                 SCALE -= 1
     
-    update_player_movement()
+    if not in_dialogue:
+        update_player_movement()
+
     view_left = int(player_pos[0] - VIEW_WIDTH // 2)
     view_top = int(player_pos[1] - VIEW_HEIGHT // 2)
     view_right = view_left + VIEW_WIDTH
     view_bottom = view_top + VIEW_HEIGHT
+
+    # Update dialogue state
+    in_dialogue = npc_manager.dialogue_manager.active
+    if in_dialogue and not dialogue_box_state:
+        dialogue_box_state = dialogue_box(npc_manager.dialogue_manager)
+    elif not in_dialogue and dialogue_box_state:
+        dialogue_box_state = None
+        print("Dialogue box state cleared")
 
     clock.tick(60)
 
