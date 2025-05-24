@@ -133,7 +133,8 @@ for level, hat_image in pirate_hat_images.items():
 npc_sprites = {}
 for npc_type, sprite_key in [
     ("waller", "NPC_WALLER"),
-    ("trader", "NPC_TRADER")
+    ("trader", "NPC_TRADER"),
+    ("pirate_hunter", "NPC_PIRATE_HUNTER")
 ]:npc_sprites[npc_type] = pygame.transform.scale(
         pygame.image.load(TILE_IMAGE_FILES[sprite_key]).convert_alpha(), (TILE_SIZE, TILE_SIZE)
     )
@@ -220,6 +221,9 @@ bite_duration = 1000  # Duration of a fish bite (1 second)
 boat_entity = None  # {"steering_pos": (x, y), "tiles": [(x, y), ...], "state": "idle"/"steering"/"moving", "direction": (dx, dy)}
 steering_interaction = False  # True when interacting with steering wheel
 in_boat_mode = False
+
+has_pirate_bane_amulet = False  # Tracks if player has the Pirate Bane Amulet
+quests = {}
 
 last_player_pos = list(player_pos)
 stationary_timer = 0
@@ -1902,44 +1906,48 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode
+    global wood, tiles_placed, turrets_placed, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests
     if in_dialogue:
         return
     if not selected_tile:
         return
     x, y = selected_tile
-    # Check Manhattan distance from player
     player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
     manhattan_dist = abs(x - player_tile_x) + abs(y - player_tile_y)
     if manhattan_dist > 3:
-        return  # Block interactions if too far
+        return
     tile = world.get_tile(x, y)
 
-    if button in (1, 3):  # Left or right click
-        # Check NPC interaction
+    if button in (1, 3):
         game_state = {
             "wood": wood,
             "has_fishing_rod": has_fishing_rod,
             "fish_caught": fish_caught,
             "world": world,
-            "wood_texts": []
+            "wood_texts": [],
+            "pirates_killed": pirates_killed,
+            "has_pirate_bane_amulet": has_pirate_bane_amulet,
+            "pirates_killed": pirates_killed,
+            "quests": quests
         }
         result = npc_manager.interact(x, y, game_state, world)
         wood = result["wood"]
         has_fishing_rod = result["has_fishing_rod"]
         fish_caught = result["fish_caught"]
+        pirates_killed = result["pirates_killed"]
+        has_pirate_bane_amulet = result.get("has_pirate_bane_amulet", has_pirate_bane_amulet)
+        quests = result.get("quests", quests)
         wood_texts.extend(result["wood_texts"])
-        if result["wood_texts"]:  # Only return if NPC was interacted with
-            return    
-    if button == 1:  # Left-click
-        # Attack pirates
+        if result["wood_texts"]:
+            return  
+    if button == 1:
         for p in pirates:
-            for pirate in p["pirates"][:]:  # Iterate over copy to allow removal
+            for pirate in p["pirates"][:]:
                 dist = math.hypot(pirate["x"] - x, pirate["y"] - y)
-                if dist < 0.5:  # Within 0.5 tiles
+                if dist < 0.5:
+                    damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))  # 50% damage boost
                     pre_hit_health = pirate["health"]
-                    pirate["health"] -= player_level  # Deal damage equal to player level
-                    # Handle hat drop at health = 1
+                    pirate["health"] -= damage
                     if pre_hit_health > 1 and pirate["health"] == 1 and not pirate.get("has_dropped_hat", False):
                         hat_particles.append({
                             "x": pirate["x"],
@@ -1957,15 +1965,13 @@ def interact(button):
                         if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
                             for key in ["fuse_timer", "fuse_count", "last_count_update"]:
                                 pirate.pop(key, None)
-                        # Drop loot for rare pirates
                         if pirate.get("is_rare", False):
                             pirate_tile_x, pirate_tile_y = int(pirate["x"]), int(pirate["y"])
                             tile_type = world.get_tile(pirate_tile_x, pirate_tile_y)
-                            if (tile_type in MOVEMENT_TILES and 
-                                tile_type not in (Tile.WATER, Tile.BOAT, Tile.TURRET) and 
+                            if (tile_type in MOVEMENT_TILES and
+                                tile_type not in (Tile.WATER, Tile.BOAT, Tile.TURRET) and
                                 random.random() < 0.33):
                                 world.set_tile(pirate_tile_x, pirate_tile_y, Tile.LOOT)
-                        # Award XP
                         xp_gained = pirate["xp_value"]
                         player_xp += xp_gained
                         player_xp_texts.append({
@@ -1975,7 +1981,6 @@ def interact(button):
                             "timer": 1000,
                             "alpha": 255
                         })
-                        # Check for level-up
                         while player_level < player_max_level and player_xp >= math.pow(2, player_level - 1):
                             player_xp -= math.pow(2, player_level - 1)
                             player_level += 1
@@ -1988,8 +1993,12 @@ def interact(button):
                             })
                         p["pirates"].remove(pirate)
                         pirates_killed += 1
+                        # Update quest progress
+                        if "pirate_hunter_quest_count" in quests:
+                            quests["pirate_hunter_quest_count"] += 1
+                            print(f"Pirate killed, quest progress: {quests['pirate_hunter_quest_count']}/{5 + (quests.get('pirate_hunter_quest_completed', 0) * 2)}")
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
-                    return  # Exit after attacking
+                    return
         # Interact with fish tile
         if tile == Tile.FISH and has_fishing_rod:
             fish_data = next((f for f in fish_tiles if f["x"] == x and f["y"] == y), None)
@@ -2513,7 +2522,11 @@ while running:
         "has_fishing_rod": has_fishing_rod,
         "fish_caught": fish_caught,
         "world": world,
-        "wood_texts": []
+        "wood_texts": [],
+        "pirates_killed": pirates_killed,
+        "has_pirate_bane_amulet": has_pirate_bane_amulet,
+        "pirates_killed": pirates_killed,
+        "quests": quests
     }
     npc_manager.spawn_npcs(game_state, player_pos, VIEW_WIDTH, VIEW_HEIGHT)
 

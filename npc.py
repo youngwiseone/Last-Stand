@@ -63,6 +63,7 @@ class DialogueManager:
         return True
 
     def end_dialogue(self):
+        print(f"Ending dialogue, current_node_id={self.current_node_id}, game_state={self.game_state}")
         self.active = False
         self.current_tree = None
         self.current_node_id = None
@@ -75,12 +76,13 @@ class DialogueManager:
     def advance_dialogue(self, choice_index=None):
         current_node = self.current_tree.get_node(self.current_node_id)
         if not current_node:
-            print("No current node, ending dialogue")
+            print(f"No current node (id={self.current_node_id}), ending dialogue")
             self.end_dialogue()
             return
 
         if current_node.action:
             try:
+                print(f"Executing node action for node {self.current_node_id}")
                 current_node.action(self.game_state)
             except Exception as e:
                 print(f"Error in node action: {e}")
@@ -88,9 +90,12 @@ class DialogueManager:
         if choice_index is not None and current_node.choices:
             if choice_index < len(current_node.choices):
                 choice_text, next_node_id, choice_action = current_node.choices[choice_index]
+                print(f"Processing choice {choice_index} ('{choice_text}'), next_node_id={next_node_id}")
                 if choice_action:
                     try:
+                        print(f"Executing choice action for choice {choice_index}")
                         choice_action(self.game_state)
+                        print(f"Choice action completed, game_state={self.game_state}")
                     except Exception as e:
                         print(f"Error in choice action: {e}")
                 self.current_node_id = next_node_id
@@ -100,14 +105,14 @@ class DialogueManager:
                 return
         elif not current_node.choices:
             self.current_node_id += 1
-            if self.current_node_id not in self.current_tree.nodes:
-                self.end_dialogue()
-                return
+            print(f"No choices, advancing to node {self.current_node_id}")
 
         next_node = self.current_tree.evaluate_node(self.current_node_id, self.game_state)
         if not next_node:
-            print("Next node invalid, ending dialogue")
+            print(f"Next node (id={self.current_node_id}) invalid, ending dialogue")
             self.end_dialogue()
+        else:
+            print(f"Advanced to node {self.current_node_id}: '{next_node.text}'")
 
     def check_timeout(self):
         if self.active and pygame.time.get_ticks() - self.start_time > self.timeout:
@@ -145,17 +150,34 @@ class WallerNPC(NPC):
         wood = game_state["wood"]
         fish_caught = game_state["fish_caught"]
 
+        # Randomized greeting
+        greetings = [
+            "Oi, you smell like seaweed! Got any wood for a rod?",
+            "These waters are full o’ fish, but pirates keep scarin’ ‘em off!",
+            "Fished all me life, and I ain’t seen a haul like yours… maybe.",
+            "Don’t just stand there, mate—fish or trade!"
+        ]
+        nodes.append(DialogueNode(
+            text=random.choice(greetings),
+            choices=[
+                ("Let’s talk fishing.", len(nodes) + 1, None),
+                ("See ya.", None, None)
+            ]
+        ))
+
+        # Congratulatory node for fish_caught >= 10
         if fish_caught >= 10:
             nodes.append(DialogueNode(
                 text="Wow, already up to 10 fish! You're a natural!",
                 condition=lambda gs: gs["fish_caught"] >= 10
             ))
 
+        # Fishing rod purchase or status nodes
         if not has_fishing_rod and wood >= 50:
-            nodes.append(DialogueNode(
+            purchase_node = DialogueNode(
                 text="Want a fishing rod? It'll cost 50 wood.",
                 choices=[
-                    ("Yes, I'll take it!", len(nodes) + 1, lambda gs: (
+                    ("Yes, I'll take it!", None, lambda gs: (
                         print(f"Executing purchase: wood={gs['wood']}, has_fishing_rod={gs['has_fishing_rod']}"),
                         gs.update({"wood": gs["wood"] - 50, "has_fishing_rod": True}),
                         gs["wood_texts"].extend([
@@ -170,17 +192,27 @@ class WallerNPC(NPC):
                     )),
                     ("No, thanks.", None, None)
                 ]
-            ))
-            nodes.append(DialogueNode(
+            )
+            nodes.append(purchase_node)
+            success_node = DialogueNode(
                 text="Here's your fishing rod! Happy fishing!"
-            ))
+            )
+            nodes.append(success_node)
+            # Set next_node_id for "Yes" choice
+            purchase_node.choices[0] = ("Yes, I'll take it!", len(nodes) - 1, purchase_node.choices[0][2])
         elif not has_fishing_rod:
             nodes.append(DialogueNode(
                 text="Come back with 50 wood, and I'll sell you a fishing rod!"
             ))
         else:
+            # Randomized response for players with fishing rod
+            responses = [
+                f"You’ve caught {fish_caught} fish? Not bad for a landlubber!",
+                f"Keep fishin’, mate. Those {fish_caught} fish won’t catch themselves!",
+                f"Seen any krakens out there? You’ve got {fish_caught} fish already!"
+            ]
             nodes.append(DialogueNode(
-                text=f"You've caught {fish_caught} fish so far. Keep it up!"
+                text=random.choice(responses)
             ))
 
         return DialogueTree(nodes)
@@ -195,6 +227,22 @@ class TraderNPC(NPC):
         wood = game_state["wood"]
         world = game_state.get("world")
 
+        # Randomized greeting
+        greetings = [
+            "Got any loot to trade, or just wastin’ my time?",
+            "I’ve sailed from Tortuga to trade—don’t disappoint me!",
+            "Wood’s worth more than gold out here. What’s your offer?",
+            "Last trader tried to cheat me. You better be honest!"
+        ]
+        nodes.append(DialogueNode(
+            text=random.choice(greetings),
+            choices=[
+                ("Let’s trade.", len(nodes) + 1, None),
+                ("Goodbye.", None, None)
+            ]
+        ))
+
+        # Trade node
         nodes.append(DialogueNode(
             text="I can trade 10 wood for a loot tile on nearby land.",
             choices=[
@@ -246,6 +294,76 @@ class TraderNPC(NPC):
             "alpha": 255
         }]
 
+class PirateHunterNPC(NPC):
+    def __init__(self, x, y, state="boat", ship=None, direction=None):
+        super().__init__(x, y, state, ship, direction)
+        self.type = "pirate_hunter"
+
+    def get_dialogue_tree(self, game_state):
+        nodes = []
+        pirates_killed = game_state.get("pirates_killed", 0)
+        quests = game_state.get("quests", {})
+        pirate_quest_count = quests.get("pirate_hunter_quest_count", 0)
+        pirate_quest_completed = quests.get("pirate_hunter_quest_completed", 0)
+
+        # Randomized greeting
+        greetings = [
+            "I hunt pirates for sport, and you look like you’ve spilled some blood!",
+            "Pirates fear my name. Got any skulls to add to my tally?",
+            "This sea’s crawling with cutthroats. Ready to thin their ranks?",
+            "I’ve sunk more pirate ships than you’ve got wood planks!"
+        ]
+        nodes.append(DialogueNode(
+            text=random.choice(greetings),
+            choices=[
+                ("Talk about pirates.", len(nodes) + 1, None),
+                ("I’ll pass.", None, None)
+            ]
+        ))
+
+        # Quest logic
+        required_pirates = 5 + (pirate_quest_completed * 2)  # 5 for first quest, 7 for second, etc.
+        if pirate_quest_count < required_pirates:
+            nodes.append(DialogueNode(
+                text=f"Take down {required_pirates} pirates, and I’ll make it worth your while. You’ve killed {pirate_quest_count}/{required_pirates} so far.",
+                choices=[
+                    ("I’m in!", len(nodes) + 1, lambda gs: gs.setdefault("quests", {}).update({"pirate_hunter_quest_count": 0}) if not gs["quests"].get("pirate_hunter_quest_count") else None),
+                    ("Not now.", None, None)
+                ],
+                condition=lambda gs: not gs.get("quests", {}).get(f"pirate_hunter_quest_completed_{gs.get('quests', {}).get('pirate_quest_completed', 0)}", False)
+            ))
+            nodes.append(DialogueNode(
+                text="Good hunting, mate! Come back when those pirates are dead."
+            ))
+        else:
+            reward_node = DialogueNode(
+                text="You’re a true pirate slayer! Take this Pirate Bane Amulet—it’ll make ‘em quiver!",
+                action=lambda gs: (
+                    gs.setdefault("quests", {}).update({
+                        "pirate_hunter_quest_completed": pirate_quest_completed + 1,
+                        f"pirate_hunter_quest_completed_{pirate_quest_completed}": True,
+                        "pirate_hunter_quest_count": 0
+                    }),
+                    gs.update({"has_pirate_bane_amulet": True}),
+                    gs["wood_texts"].extend([
+                        {
+                            "x": self.x, "y": self.y - 0.5, "text": "+Pirate Bane Amulet", "timer": 1000, "alpha": 255
+                        }
+                    ]),
+                    print(f"Quest completed: has_pirate_bane_amulet={gs.get('has_pirate_bane_amulet')}, completed quests={gs['quests']['pirate_hunter_quest_completed']}")
+                )
+            )
+            nodes.append(reward_node)
+
+        # Post-quest dialogue
+        if pirate_quest_completed > 0:
+            nodes.append(DialogueNode(
+                text=f"You’ve cleared {pirate_quest_completed} pirate bounties. Got another {required_pirates} in you?",
+                condition=lambda gs: gs.get("quests", {}).get("pirate_hunter_quest_completed", 0) > 0
+            ))
+
+        return DialogueTree(nodes)
+
 NPC_REGISTRY = [
     {
         "type": "waller",
@@ -262,6 +380,15 @@ NPC_REGISTRY = [
         "sprite_key": "NPC_TRADER",
         "spawn_conditions": {
             "wood_threshold": 100,
+            "max_instances": 1
+        }
+    },
+    {
+        "type": "pirate_hunter",
+        "class": PirateHunterNPC,
+        "sprite_key": "NPC_PIRATE_HUNTER",
+        "spawn_conditions": {
+            "pirates_killed_threshold": 10,
             "max_instances": 1
         }
     }
@@ -291,26 +418,45 @@ class NPCManager:
 
     def spawn_npcs(self, game_state, player_pos, view_width, view_height):
         wood = game_state["wood"]
+        pirates_killed = game_state.get("pirates_killed", 0)
         for npc_config in NPC_REGISTRY:
             npc_type = npc_config["type"]
             npc_class = npc_config["class"]
             conditions = npc_config["spawn_conditions"]
-            wood_threshold = conditions["wood_threshold"]
-            max_instances = conditions["max_instances"]
-            if (wood >= wood_threshold and
-                self.spawned_counts[npc_type] < max_instances):
-                buffer = 2
-                spawn_dist = view_width / 2 + buffer
-                angle = random.uniform(0, 2 * math.pi)
-                spawn_x = player_pos[0] + math.cos(angle) * spawn_dist
-                spawn_y = player_pos[1] + math.sin(angle) * spawn_dist
-                dx = player_pos[0] - spawn_x
-                dy = player_pos[1] - spawn_y
-                length = math.hypot(dx, dy) or 1
-                direction = [dx / length, dy / length]
-                npc = npc_class(spawn_x, spawn_y, direction=direction)
-                self.npcs.append(npc)
-                self.spawned_counts[npc_type] += 1
+            if npc_type == "pirate_hunter":
+                threshold = conditions["pirates_killed_threshold"]
+                max_instances = conditions["max_instances"]
+                if (pirates_killed >= threshold and
+                    self.spawned_counts[npc_type] < max_instances):
+                    buffer = 2
+                    spawn_dist = view_width / 2 + buffer
+                    angle = random.uniform(0, 2 * math.pi)
+                    spawn_x = player_pos[0] + math.cos(angle) * spawn_dist
+                    spawn_y = player_pos[1] + math.sin(angle) * spawn_dist
+                    dx = player_pos[0] - spawn_x
+                    dy = player_pos[1] - spawn_y
+                    length = math.hypot(dx, dy) or 1
+                    direction = [dx / length, dy / length]
+                    npc = npc_class(spawn_x, spawn_y, direction=direction)
+                    self.npcs.append(npc)
+                    self.spawned_counts[npc_type] += 1
+            else:
+                wood_threshold = conditions["wood_threshold"]
+                max_instances = conditions["max_instances"]
+                if (wood >= wood_threshold and
+                    self.spawned_counts[npc_type] < max_instances):
+                    buffer = 2
+                    spawn_dist = view_width / 2 + buffer
+                    angle = random.uniform(0, 2 * math.pi)
+                    spawn_x = player_pos[0] + math.cos(angle) * spawn_dist
+                    spawn_y = player_pos[1] + math.sin(angle) * spawn_dist
+                    dx = player_pos[0] - spawn_x
+                    dy = player_pos[1] - spawn_y
+                    length = math.hypot(dx, dy) or 1
+                    direction = [dx / length, dy / length]
+                    npc = npc_class(spawn_x, spawn_y, direction=direction)
+                    self.npcs.append(npc)
+                    self.spawned_counts[npc_type] += 1
 
     def update(self, dt, world, player_pos):
         self.now = pygame.time.get_ticks()
