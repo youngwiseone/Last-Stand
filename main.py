@@ -80,6 +80,8 @@ tile_images = {
     "KRAKEN": pygame.transform.scale(pygame.image.load(TILE_IMAGE_FILES["KRAKEN"]).convert_alpha(), (TILE_SIZE, TILE_SIZE)),
     Tile.STEERING_WHEEL: pygame.image.load(TILE_IMAGE_FILES["STEERING_WHEEL"]).convert_alpha(),
     "ARROW": pygame.image.load(TILE_IMAGE_FILES["ARROW"]).convert_alpha(),
+    Tile.WOOD: pygame.image.load(TILE_IMAGE_FILES["WOOD"]).convert_alpha(),
+    Tile.METAL: pygame.image.load(TILE_IMAGE_FILES["METAL"]).convert_alpha()
 }
 
 player_image = pygame.image.load(TILE_IMAGE_FILES["PLAYER"]).convert_alpha()
@@ -201,12 +203,15 @@ game_over = False
 kraken_game_over = False
 fade_done = False
 player_pos = [0.0, 0.0]  # Now in world coordinates with floating-point precision
-wood = 5
+wood = 300
 selected_block = Tile.LAND
 player_move_timer = 0
 player_move_delay = 150
 facing = [0, -1]
 interaction_ui_enabled = False
+
+building_mode = None  # None, "wood", or "metal"
+carried_item_pos = None  # Stores the position of the picked-up Wood or Metal tile
 
 has_fishing_rod = False  # Tracks if player has the fishing rod
 fish_tiles = []  # List of active fish tiles: {"x": x, "y": y, "spawn_time": time}
@@ -265,6 +270,7 @@ pirate_walk_delay = 300
 
 wall_levels = {}
 wall_damage_timers = {}  # Track last time each wall was damaged
+WALL_MAX_LEVEL = 99
 
 boulder_placement_mode = False  # Tracks if player is in boulder placement mode
 picked_boulder_pos = None  # Stores the position of the picked-up boulder
@@ -548,6 +554,15 @@ def draw_grid():
             boulder_image = scaled_tile_images[Tile.BOULDER].copy()
             boulder_image.set_alpha(128)
             game_surface.blit(boulder_image, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
+
+    if building_mode and selected_tile:
+        sel_x, sel_y = selected_tile
+        sel_px = sel_x - top_left_x
+        sel_py = sel_y - top_left_y
+        if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
+            item_image = scaled_tile_images[Tile.WOOD if building_mode == "wood" else Tile.METAL].copy()
+            item_image.set_alpha(128)
+            game_surface.blit(item_image, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
     # Render floating text and images (wood and XP)
     for text in wood_texts:
@@ -1906,7 +1921,7 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, boulder_placement_mode, picked_boulder_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests
+    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests
     if in_dialogue:
         return
     if not selected_tile:
@@ -1918,20 +1933,19 @@ def interact(button):
         return
     tile = world.get_tile(x, y)
 
+    # Handle NPC interactions
     if button in (1, 3):
         game_state = {
-            "wood": wood,
+            "wood": 300,  # Static dummy value
             "has_fishing_rod": has_fishing_rod,
             "fish_caught": fish_caught,
             "world": world,
             "wood_texts": [],
             "pirates_killed": pirates_killed,
             "has_pirate_bane_amulet": has_pirate_bane_amulet,
-            "pirates_killed": pirates_killed,
             "quests": quests
         }
         result = npc_manager.interact(x, y, game_state, world)
-        wood = result["wood"]
         has_fishing_rod = result["has_fishing_rod"]
         fish_caught = result["fish_caught"]
         pirates_killed = result["pirates_killed"]
@@ -1939,13 +1953,131 @@ def interact(button):
         quests = result.get("quests", quests)
         wood_texts.extend(result["wood_texts"])
         if result["wood_texts"]:
-            return  
-    if button == 1:
+            return
+
+    if button == 1:  # Left-click: Pick up items or build
+        # Handle building mode placements
+        if building_mode:
+            if building_mode == "wood":
+                if tile == Tile.BOULDER:
+                    world.set_tile(x, y, Tile.WALL)
+                    wall_levels[(x, y)] = 1
+                    tiles_placed += 1
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                    return
+                elif tile == Tile.WALL:
+                    current_level = wall_levels.get((x, y), 1)
+                    if current_level < WALL_MAX_LEVEL:
+                        wall_levels[(x, y)] = current_level + 1
+                        tiles_placed += 1
+                        building_mode = None
+                        carried_item_pos = None
+                        interaction_ui["left_message"] = ""
+                        interaction_ui["alpha"] = 0
+                        return
+                elif tile == Tile.WATER and has_adjacent_boat_or_land(x, y):
+                    world.set_tile(x, y, Tile.BOAT)
+                    tiles_placed += 1
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                    sound_place_land.play()
+                    return
+                elif tile == Tile.BOAT:
+                    world.set_tile(x, y, Tile.STEERING_WHEEL)
+                    tiles_placed += 1
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                    return
+            elif building_mode == "metal":
+                if tile == Tile.WOOD:
+                    world.set_tile(x, y, Tile.TURRET)
+                    turret_levels[(x, y)] = 1
+                    turret_xp[(x, y)] = 0
+                    turrets_placed += 1
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                    sound_place_turret.play()
+                    return
+            return  # Exit if no valid placement to prevent pickup
+
+        # Pick up Wood or Metal tile (only when not in building_mode)
+        if tile in (Tile.WOOD, Tile.METAL):
+            building_mode = "wood" if tile == Tile.WOOD else "metal"
+            carried_item_pos = (x, y)
+            world.set_tile(x, y, Tile.LAND)  # Remove the item from the map
+            interaction_ui["left_message"] = f"Place {building_mode.capitalize()} (Left Click)\nCancel (Right Click)"
+            interaction_ui["alpha"] = 255
+            return
+        # Handle fishing
+        if tile == Tile.FISH and has_fishing_rod:
+            fish_data = next((f for f in fish_tiles if f["x"] == x and f["y"] == y), None)
+            if fish_data:
+                if fishing_state == "fishing" and bobber and bobber["state"] == "biting" and bobber["target_x"] == x + 0.5 and bobber["target_y"] == y + 0.5:
+                    building_mode = random.choice(["wood", "metal"])
+                    carried_item_pos = (x, y)
+                    fish_caught += 1
+                    wood_texts.append({
+                        "x": x,
+                        "y": y,
+                        "text": f"+{building_mode.capitalize()}",
+                        "timer": 1000,
+                        "alpha": 255
+                    })
+                    fishing_state = None
+                    bobber = None
+                    interaction_ui["left_message"] = f"Place {building_mode.capitalize()} (Left Click)\nCancel (Right Click)"
+                    interaction_ui["alpha"] = 255
+                    return
+                elif not fishing_state:
+                    fishing_state = "casting"
+                    bobber = {
+                        "x": player_pos[0] + 0.5,
+                        "y": player_pos[1] + 0.5,
+                        "target_x": x + 0.5,
+                        "target_y": y + 0.5,
+                        "state": "moving",
+                        "bite_timer": 0,
+                        "last_switch": 0
+                    }
+            return
+        # Handle steering wheel
+        if tile == Tile.STEERING_WHEEL and not in_boat_mode:
+            sx, sy = x, y
+            connected_tiles = find_connected_boat_tiles(sx, sy)
+            if connected_tiles:
+                offsets = [(tx - sx, ty - sy) for tx, ty in connected_tiles]
+                for tx, ty in connected_tiles:
+                    world.set_tile(tx, ty, Tile.WATER)
+                world.set_tile(sx, sy, Tile.WATER)
+                boat_entity = {"offsets": offsets}
+                in_boat_mode = True
+                player_pos = [sx + 0.5, sy + 0.5]
+            return
+        # Collect loot
+        if tile == Tile.LOOT:
+            building_mode = random.choice(["wood", "metal"])
+            carried_item_pos = (x, y)
+            world.set_tile(x, y, Tile.LAND)
+            interaction_ui["left_message"] = f"Place {building_mode.capitalize()} (Left Click)\nCancel (Right Click)"
+            interaction_ui["alpha"] = 255
+            return
+
+    elif button == 3:  # Right-click: Attack
+        damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))
+        # Attack pirates
         for p in pirates:
             for pirate in p["pirates"][:]:
                 dist = math.hypot(pirate["x"] - x, pirate["y"] - y)
                 if dist < 0.5:
-                    damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))  # 50% damage boost
                     pre_hit_health = pirate["health"]
                     pirate["health"] -= damage
                     if pre_hit_health > 1 and pirate["health"] == 1 and not pirate.get("has_dropped_hat", False):
@@ -1993,190 +2125,104 @@ def interact(button):
                             })
                         p["pirates"].remove(pirate)
                         pirates_killed += 1
-                        # Update quest progress
                         if "pirate_hunter_quest_count" in quests:
                             quests["pirate_hunter_quest_count"] += 1
                             print(f"Pirate killed, quest progress: {quests['pirate_hunter_quest_count']}/{5 + (quests.get('pirate_hunter_quest_completed', 0) * 2)}")
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
                     return
-        # Interact with fish tile
-        if tile == Tile.FISH and has_fishing_rod:
-            fish_data = next((f for f in fish_tiles if f["x"] == x and f["y"] == y), None)
-            if fish_data:
-                if fishing_state == "fishing" and bobber and bobber["state"] == "biting" and bobber["target_x"] == x + 0.5 and bobber["target_y"] == y + 0.5:
-                    # Catch fish
-                    wood_gained = random.randint(5, 10)
-                    wood += wood_gained
-                    fish_caught += 1
-                    wood_texts.append({
-                        "x": x,
-                        "y": y,
-                        "text": f"+{wood_gained} Wood",
-                        "timer": 1000,
-                        "alpha": 255
-                    })
-                    fishing_state = None
-                    bobber = None
-                elif not fishing_state:
-                    # Start fishing
-                    fishing_state = "casting"
-                    bobber = {
-                        "x": player_pos[0] + 0.5,
-                        "y": player_pos[1] + 0.5,
-                        "target_x": x + 0.5,
-                        "target_y": y + 0.5,
-                        "state": "moving",
-                        "bite_timer": 0,
-                        "last_switch": 0
-                    }
+        # Attack tree
+        if tile == Tile.TREE:
+            if random.random() < 0.5:
+                world.set_tile(x, y, Tile.WOOD)
+            else:
+                world.set_tile(x, y, Tile.SAPLING)
+                tree_growth[(x, y)] = pygame.time.get_ticks()
             return
-        # Handle boulder placement
-        if boulder_placement_mode:
-            # Can only place on LAND or where the boulder was originally picked up
-            if (tile == Tile.LAND or (x, y) == picked_boulder_pos):
-                world.set_tile(x, y, Tile.BOULDER)
-                boulder_placement_mode = False
-                picked_boulder_pos = None
-                interaction_ui["left_message"] = ""
-                interaction_ui["alpha"] = 0
-            return
-        # Pick up boulder
-        if tile == Tile.BOULDER:
-            world.set_tile(x, y, Tile.LAND)  # Remove boulder from current position
-            boulder_placement_mode = True
-            picked_boulder_pos = (x, y)  # Store original position
-            interaction_ui["left_message"] = "Click a land tile to place the boulder\nRight click to cancel"
-            interaction_ui["alpha"] = 255
-            return
-        if tile == Tile.STEERING_WHEEL and not in_boat_mode:
-            sx, sy = x, y
-            connected_tiles = find_connected_boat_tiles(sx, sy)
-            if connected_tiles:
-                # Store relative offsets from steering wheel
-                offsets = [(tx - sx, ty - sy) for tx, ty in connected_tiles]
-                # Convert all connected tiles (including steering wheel) to water
-                for tx, ty in connected_tiles:
-                    world.set_tile(tx, ty, Tile.WATER)
-                world.set_tile(sx, sy, Tile.WATER)  # Ensure steering wheel tile is also water
-                # Define boat entity with offsets
-                boat_entity = {"offsets": offsets}
-                in_boat_mode = True
-                player_pos = [sx + 0.5, sy + 0.5]  # Snap to steering wheel position
-            return
-        if tile == Tile.BOAT and wood >= 1:
-            # Place steering wheel 
-            world.set_tile(x, y, Tile.STEERING_WHEEL)
-            wood -= 1 #TODO Update to correct cost later
-            tiles_placed += 1                
-            return
-        # Place Boat Tile
-        if tile == Tile.WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
-            world.set_tile(x, y, Tile.BOAT)
-            wood -= 3
-            tiles_placed += 1
-            sound_place_land.play()
-        elif tile == Tile.LOOT:
-            wood_gained = random.randint(5, 10)
-            wood += wood_gained
-            world.set_tile(x, y, Tile.LAND)
-            wood_texts.append({
-                "x": x,
-                "y": y,
-                "text": f"+{wood_gained} Wood",
-                "timer": 1000,
-                "alpha": 255
-            })
-        elif tile == Tile.TREE:
-            world.set_tile(x, y, Tile.LAND)
-            wood_gained = random.randint(2, 4)
-            wood += wood_gained
-            wood_texts.append({
-                "x": x,
-                "y": y,
-                "text": f"+{wood_gained} Wood",
-                "timer": 1000,
-                "alpha": 255
-            })
-        elif tile == Tile.SAPLING:
-            world.set_tile(x, y, Tile.LAND)
-            wood += 1
+        # Attack sapling
+        if tile == Tile.SAPLING:
+            if random.random() < 0.5:
+                world.set_tile(x, y, Tile.WOOD)
+            else:
+                world.set_tile(x, y, Tile.LAND)
             if (x, y) in tree_growth:
                 del tree_growth[(x, y)]
-        else:
-            plant_sapling()
-    
-    elif button == 3:  # Right-click
+            return
+        # Attack boulder
+        if tile == Tile.BOULDER:
+            if random.random() < 0.33:
+                world.set_tile(x, y, Tile.METAL)
+            else:
+                world.set_tile(x, y, Tile.LAND)
+            return
+        # Attack wall
+        if tile == Tile.WALL:
+            wall_pos = (x, y)
+            last_damaged = wall_damage_timers.get(wall_pos, 0)
+            now = pygame.time.get_ticks()
+            if now - last_damaged >= 1000:  # Damage every second
+                current_level = wall_levels.get(wall_pos, 1)
+                if current_level > 1:
+                    wall_levels[wall_pos] = current_level - 1
+                else:
+                    world.set_tile(x, y, Tile.BOULDER)
+                    if wall_pos in wall_levels:
+                        del wall_levels[wall_pos]
+                wall_damage_timers[wall_pos] = now
+            return
+        # Attack turret
+        if tile == Tile.TURRET:
+            turret_pos = (x, y)
+            last_damaged = wall_damage_timers.get(turret_pos, 0)
+            now = pygame.time.get_ticks()
+            if now - last_damaged >= 1000:  # Damage every second
+                current_level = turret_levels.get(turret_pos, 1)
+                if current_level > 1:
+                    turret_levels[turret_pos] = current_level - 1
+                    turret_xp[turret_pos] = 0
+                else:
+                    world.set_tile(x, y, Tile.LAND)
+                    if turret_pos in turret_cooldowns:
+                        del turret_cooldowns[turret_pos]
+                    if turret_pos in turret_levels:
+                        del turret_levels[turret_pos]
+                    if turret_pos in turret_xp:
+                        del turret_xp[turret_pos]
+                wall_damage_timers[turret_pos] = now
+            return
+        # Cancel building mode
+        if building_mode and carried_item_pos:
+            world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.WOOD if building_mode == "wood" else Tile.METAL)
+            building_mode = None
+            carried_item_pos = None
+            interaction_ui["left_message"] = ""
+            interaction_ui["alpha"] = 0
+            return
         # Cancel fishing
         if fishing_state:
             fishing_state = None
             bobber = None
             return
-        if boulder_placement_mode:
-            # Cancel boulder placement and return it to its original position
-            if picked_boulder_pos:
-                world.set_tile(picked_boulder_pos[0], picked_boulder_pos[1], Tile.BOULDER)
-            boulder_placement_mode = False
-            picked_boulder_pos = None
-            interaction_ui["left_message"] = ""
-            interaction_ui["alpha"] = 0
-            return
-        # Convert boulder to wall or level up existing wall
-        if tile == Tile.BOULDER and wood >= 5:
-            world.set_tile(x, y, Tile.WALL)
-            wall_levels[(x, y)] = 1  # Start at level 1
-            wood -= 5
-            tiles_placed += 1
-        elif tile == Tile.WALL and wood >= 5:
-            current_level = wall_levels.get((x, y), 1)
-            wall_levels[(x, y)] = current_level + 1  # Increase level
-            wood -= 5
-            tiles_placed += 1
-        if steering_interaction and tile == Tile.STEERING_WHEEL:
-            steering_interaction = False
-            return
+        # Exit boat mode
         if in_boat_mode:
-            # Exit boat mode: Place boat tiles back
             for offset in boat_entity["offsets"]:
                 tile_x = int(player_pos[0] + offset[0] + 0.5)
                 tile_y = int(player_pos[1] + offset[1] + 0.5)
                 world.set_tile(tile_x, tile_y, Tile.BOAT)
-            # Place steering wheel at player's current position
             steering_x = int(player_pos[0] + 0.5)
             steering_y = int(player_pos[1] + 0.5)
             world.set_tile(steering_x, steering_y, Tile.STEERING_WHEEL)
             in_boat_mode = False
             boat_entity = None
             return
-        turret_pos = (x, y)
-        if tile == Tile.TURRET:
-            level = turret_levels.get(turret_pos, 1)
-            refund = 3
-            world.set_tile(x, y, Tile.LAND)
-            wood += refund
-            turrets_placed = max(0, turrets_placed - 1)
-            if turret_pos in turret_cooldowns:
-                del turret_cooldowns[turret_pos]
-            if turret_pos in turret_levels:
-                del turret_levels[turret_pos]
-            if turret_pos in turret_xp:
-                del turret_xp[turret_pos]
-        elif tile == Tile.LAND and wood >= 3:
-            world.set_tile(x, y, Tile.TURRET)
-            wood -= 3
-            turrets_placed += 1
-            turret_levels[turret_pos] = 1
-            turret_xp[turret_pos] = 0
-            sound_place_turret.play()
 
 def update_interaction_ui():
-    global wood, interaction_ui, stationary_timer, last_player_pos, has_fishing_rod
+    global interaction_ui, stationary_timer, last_player_pos, has_fishing_rod, building_mode
     if not interaction_ui_enabled:
         interaction_ui["alpha"] = 0
         interaction_ui["offset"] = 20
         interaction_ui["fade_timer"] = 0
         return
 
-    # Check if the player has moved
     current_pos = list(player_pos)
     if current_pos != last_player_pos:
         interaction_ui["alpha"] = 0
@@ -2206,50 +2252,57 @@ def update_interaction_ui():
     interaction_ui["left_message"] = ""
     interaction_ui["right_message"] = ""
 
-    # Show boulder placement message when in boulder placement mode
-    if boulder_placement_mode:
-        interaction_ui["left_message"] = "Click a land tile to place the boulder\nRight click to cancel"
-        interaction_ui["alpha"] = 255
+    if building_mode:
+        if building_mode == "wood":
+            if tile == Tile.BOULDER:
+                interaction_ui["left_message"] = "Place Wood\nBuild Wall\n(Level 1)\n(Left Click)"
+            elif tile == Tile.WALL:
+                level = wall_levels.get((x, y), 1)
+                interaction_ui["left_message"] = f"Place Wood\nUpgrade Wall\n(Level {level + 1})\n(Left Click)"
+            elif tile == Tile.WATER and has_adjacent_boat_or_land(x, y):
+                interaction_ui["left_message"] = "Place Wood\nBuild Boat Tile\n(Left Click)"
+            elif tile == Tile.BOAT:
+                interaction_ui["left_message"] = "Place Wood\nBuild Steering Wheel\n(Left Click)"
+            if interaction_ui["left_message"]:
+                interaction_ui["alpha"] = 255
+            return  # No generic prompt to prevent invalid placements
+        elif building_mode == "metal":
+            if tile == Tile.WOOD:
+                interaction_ui["left_message"] = "Place Metal\nBuild Turret\n(Left Click)"
+                interaction_ui["alpha"] = 255
+            return  # No generic prompt for metal
         return
-        
-    # Show fish tile interaction
+
     if tile == Tile.FISH and has_fishing_rod:
-        interaction_ui["left_message"] = "Fish for Wood\n(Left Click)"
+        interaction_ui["left_message"] = "Fish for Item\n(Left Click)"
         interaction_ui["alpha"] = 255
     elif steering_interaction and tile == Tile.STEERING_WHEEL:
         interaction_ui["left_message"] = "Click to move boat\nRight click to cancel"
         interaction_ui["alpha"] = 255
         return
-    elif tile == Tile.BOAT and wood >= 150 and not boat_entity:
-        interaction_ui["right_message"] = "Place Steering Wheel\n-150 Wood"
     elif tile == Tile.STEERING_WHEEL:
-        interaction_ui["left_message"] = "Steer Boat"
-    # Show boulder pickup message
+        interaction_ui["left_message"] = "Steer Boat\n(Left Click)"
+    elif tile in (Tile.WOOD, Tile.METAL):
+        interaction_ui["left_message"] = f"Pick up { 'Wood' if tile == Tile.WOOD else 'Metal' }\n(Left Click)"
+    elif tile in (Tile.TREE, Tile.SAPLING):
+        interaction_ui["right_message"] = "Attack\n50% chance for Wood/Sapling\n(Right Click)"
     elif tile == Tile.BOULDER:
-        interaction_ui["left_message"] = "Pick up Boulder"
-        if wood >= 5:
-            interaction_ui["right_message"] = "Convert to Wall\n-5 Wood\n(Level 1)"
+        interaction_ui["right_message"] = "Attack\n33% chance for Metal\n(Right Click)"
     elif tile == Tile.WALL:
-        level = wall_levels.get((x, y), 1)
-        if wood >= 5:
-            interaction_ui["right_message"] = f"Upgrade Wall\n-5 Wood\n(Level {level + 1})"
-    elif tile == Tile.WATER and wood >= 3 and has_adjacent_boat_or_land(x, y):
-        interaction_ui["left_message"] = "Place Boat Tile\n-3 Wood\n(Next to Boat/Land)"
-    elif tile == Tile.LOOT:
-        interaction_ui["left_message"] = "Collect\n+5-10 Wood"
-    elif tile == Tile.TREE:
-        interaction_ui["left_message"] = "Chop\n+2-4 Wood"
-    elif tile == Tile.SAPLING:
-        interaction_ui["left_message"] = "Uproot\n+1 Wood"
+        interaction_ui["right_message"] = "Attack\n(Right Click)"
     elif tile == Tile.TURRET:
-        turret_pos = (x, y)
-        level = turret_levels.get(turret_pos, 1)
-        interaction_ui["right_message"] = "Pickup\n+3 Wood"
-    elif tile == Tile.LAND:
-        if wood >= 1:
-            interaction_ui["left_message"] = "Plant Sapling\n-1 Wood"
-        if wood >= 3:
-            interaction_ui["right_message"] = "Place Turret\n-3 Wood"
+        interaction_ui["right_message"] = "Attack\n(Right Click)"
+
+    player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
+    manhattan_dist = abs(x - player_tile_x) + abs(y - player_tile_y)
+    if manhattan_dist <= 3:
+        for p in pirates:
+            for pirate in p["pirates"]:
+                dist = math.hypot(pirate["x"] - x, pirate["y"] - y)
+                if dist < 0.5:
+                    interaction_ui["right_message"] = "Attack Pirate\n(Right Click)"
+                    interaction_ui["alpha"] = 255
+                    return
 
     if not interaction_ui["left_message"] and not interaction_ui["right_message"]:
         interaction_ui["alpha"] = 0

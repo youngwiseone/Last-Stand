@@ -78,18 +78,20 @@ class Tile(IntEnum):
     BOULDER = 11  # Boulder tile, can be moved or converted
     FISH = 12  # Fish tile, can be caught for wood
     STEERING_WHEEL = 13  # Steering wheel tile for boat control
+    WOOD = 14  # Tile for Wood
+    METAL = 15  # Tile for Metal
 
 # --- Movement and Land Tiles ---
 # Tile sets defining valid tiles for movement and boat tile adjacency. Used for pathfinding and placement rules.
 MOVEMENT_TILES = (
     Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.LAND,
     Tile.USED_LAND, Tile.LOOT, Tile.SAPLING, Tile.TURRET,
-    Tile.BOULDER, Tile.STEERING_WHEEL
+    Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL
 )  # Tiles that entities can move onto
 LAND_TILES = (
     Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.LAND,
     Tile.USED_LAND, Tile.LOOT, Tile.SAPLING, Tile.TREE,
-    Tile.TURRET, Tile.BOULDER, Tile.STEERING_WHEEL
+    Tile.TURRET, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL
 )  # Tiles considered adjacent for boat placement
 
 # --- Sound Files ---
@@ -140,7 +142,9 @@ TILE_IMAGE_FILES = {
     "PLAYER_FISHING": "Assets/player_fishing.png",  # Image for player fishing sprite
     "NPC_WALLER": "Assets/npc_waller.png",  # Image for waller NPC sprite
     "NPC_TRADER": "Assets/npc_trader.png",  # Add Trader sprite
-    "NPC_PIRATE_HUNTER": "Assets/npc_hunter.png"
+    "NPC_PIRATE_HUNTER": "Assets/npc_hunter.png",
+    "WOOD": "Assets/wood.png",  # Image for wood tiles
+    "METAL": "Assets/metal.png",  # Image for metal tiles
 }
 
 # --- Water Animation Frames ---
