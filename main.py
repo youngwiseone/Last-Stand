@@ -372,11 +372,11 @@ def draw_grid():
                 py = (y + 1 - (top_left_y - start_y)) * TILE_SIZE
                 under_rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
                 tile = world.get_tile(gx, gy)
-                if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT]:
+                if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.METAL, Tile.WOOD]:
                     under_land_image = scaled_tile_images.get("UNDER_LAND")
                     if under_land_image:
                         game_surface.blit(under_land_image, under_rect)
-                elif tile in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3]:
+                elif tile in [Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.STEERING_WHEEL]:
                     under_wood_image = scaled_tile_images.get("UNDER_WOOD")
                     if under_wood_image:
                         game_surface.blit(under_wood_image, under_rect)
@@ -389,7 +389,7 @@ def draw_grid():
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-            if tile in [Tile.TURRET, Tile.TREE, Tile.SAPLING, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.STEERING_WHEEL]:
+            if tile in [Tile.TURRET, Tile.TREE, Tile.SAPLING, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL]:
                 # Render the base tile underneath
                 if tile == Tile.STEERING_WHEEL:
                     # For STEERING_WHEEL, render BOAT_TILE underneath
@@ -1959,7 +1959,14 @@ def interact(button):
         # Handle building mode placements
         if building_mode:
             if building_mode == "wood":
-                if tile == Tile.BOULDER:
+                if tile == Tile.LAND:
+                    world.set_tile(x, y, Tile.WOOD)
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                    return
+                elif tile == Tile.BOULDER:
                     world.set_tile(x, y, Tile.WALL)
                     wall_levels[(x, y)] = 1
                     tiles_placed += 1
@@ -1996,7 +2003,14 @@ def interact(button):
                     interaction_ui["alpha"] = 0
                     return
             elif building_mode == "metal":
-                if tile == Tile.WOOD:
+                if tile == Tile.LAND:
+                    world.set_tile(x, y, Tile.METAL)
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                    return
+                elif tile == Tile.WOOD:
                     world.set_tile(x, y, Tile.TURRET)
                     turret_levels[(x, y)] = 1
                     turret_xp[(x, y)] = 0
@@ -2254,7 +2268,9 @@ def update_interaction_ui():
 
     if building_mode:
         if building_mode == "wood":
-            if tile == Tile.BOULDER:
+            if tile == Tile.LAND:
+                interaction_ui["left_message"] = "Place Wood\n(Left Click)"
+            elif tile == Tile.BOULDER:
                 interaction_ui["left_message"] = "Place Wood\nBuild Wall\n(Level 1)\n(Left Click)"
             elif tile == Tile.WALL:
                 level = wall_levels.get((x, y), 1)
@@ -2265,12 +2281,15 @@ def update_interaction_ui():
                 interaction_ui["left_message"] = "Place Wood\nBuild Steering Wheel\n(Left Click)"
             if interaction_ui["left_message"]:
                 interaction_ui["alpha"] = 255
-            return  # No generic prompt to prevent invalid placements
+            return
         elif building_mode == "metal":
-            if tile == Tile.WOOD:
+            if tile == Tile.LAND:
+                interaction_ui["left_message"] = "Place Metal\n(Left Click)"
+            elif tile == Tile.WOOD:
                 interaction_ui["left_message"] = "Place Metal\nBuild Turret\n(Left Click)"
+            if interaction_ui["left_message"]:
                 interaction_ui["alpha"] = 255
-            return  # No generic prompt for metal
+            return
         return
 
     if tile == Tile.FISH and has_fishing_rod:
