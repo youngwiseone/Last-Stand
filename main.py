@@ -210,6 +210,11 @@ player_move_delay = 150
 facing = [0, -1]
 interaction_ui_enabled = False
 
+attack_animation_timer = 0  # Tracks time since attack started (ms)
+attack_animation_duration = 200  # Total duration of squish animation (ms)
+attack_squish_scale = (1.2, 0.8)  # Initial squish: 120% width, 80% height
+attack_bounce_scale = (0.9, 1.1)  # Bounce: 90% width, 110% height
+
 building_mode = None  # None, "wood", or "metal"
 carried_item_pos = None  # Stores the position of the picked-up Wood or Metal tile
 
@@ -444,28 +449,7 @@ def draw_grid():
                     game_surface.blit(boat_tile_image, (sx * TILE_SIZE, sy * TILE_SIZE))
 
     # Render player
-    px = player_pos[0] - top_left_x
-    py = player_pos[1] - top_left_y
-
-    if not in_boat_mode:
-        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            current_player_image = scaled_player_fishing_image if fishing_state else scaled_player_image
-            game_surface.blit(current_player_image, (px * TILE_SIZE, py * TILE_SIZE))
-    else:
-        if boat_entity:
-            # Render all boat tiles, including one under the steering wheel position
-            for offset in boat_entity["offsets"]:
-                tile_x = player_pos[0] + offset[0]
-                tile_y = player_pos[1] + offset[1]
-                tx = tile_x - top_left_x
-                ty = tile_y - top_left_y
-                if 0 <= tx < VIEW_WIDTH and 0 <= ty < VIEW_HEIGHT:
-                    game_surface.blit(scaled_tile_images[Tile.BOAT], (tx * TILE_SIZE, ty * TILE_SIZE))
-            
-            # Render player sprite and steering wheel at player position
-            if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-                game_surface.blit(scaled_player_image, (px * TILE_SIZE, py * TILE_SIZE))
-                game_surface.blit(scaled_tile_images[Tile.STEERING_WHEEL], (px * TILE_SIZE, py * TILE_SIZE))
+    draw_player(top_left_x, top_left_y)
 
     # Render bobber
     if bobber:
@@ -824,6 +808,82 @@ def draw_minimap():
     screen_width, _ = screen.get_size()
     minimap_x = screen_width - minimap_surface.get_width() - 10
     screen.blit(minimap_surface, (minimap_x, 10))
+
+def draw_player(top_left_x, top_left_y):
+    global player_pos, scaled_player_image, scaled_player_fishing_image, in_boat_mode, fishing_state, boat_entity, scaled_tile_images, attack_animation_timer, attack_animation_duration, attack_squish_scale, attack_bounce_scale
+    # Calculate sprite position relative to view
+    px = player_pos[0] - top_left_x
+    py = player_pos[1] - top_left_y
+
+    if not in_boat_mode:
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            # Select sprite based on fishing state
+            current_player_image = scaled_player_fishing_image if fishing_state else scaled_player_image
+            # Apply squish and bounce animation
+            if attack_animation_timer > 0:
+                progress = attack_animation_timer / attack_animation_duration
+                if progress > 0.5:
+                    # Squish phase (first half)
+                    t = (progress - 0.5) * 2  # Normalize to [0, 1]
+                    scale_x = 1 + (attack_squish_scale[0] - 1) * (1 - t)
+                    scale_y = 1 + (attack_squish_scale[1] - 1) * (1 - t)
+                else:
+                    # Bounce phase (second half)
+                    t = progress * 2  # Normalize to [0, 1]
+                    scale_x = 1 + (attack_bounce_scale[0] - 1) * t
+                    scale_y = 1 + (attack_bounce_scale[1] - 1) * t
+                # Scale the sprite
+                original_width, original_height = current_player_image.get_size()
+                new_width = int(original_width * scale_x)
+                new_height = int(original_height * scale_y)
+                scaled_image = pygame.transform.scale(current_player_image, (new_width, new_height))
+                # Adjust position to keep sprite centered
+                px_adjusted = px * TILE_SIZE - (new_width - original_width) / 2
+                py_adjusted = py * TILE_SIZE - (new_height - original_height) / 2
+                game_surface.blit(scaled_image, (px_adjusted, py_adjusted))
+            else:
+                # Normal rendering
+                game_surface.blit(current_player_image, (px * TILE_SIZE, py * TILE_SIZE))
+    else:
+        if boat_entity:
+            # Render all boat tiles, including one under the steering wheel position
+            for offset in boat_entity["offsets"]:
+                tile_x = player_pos[0] + offset[0]
+                tile_y = player_pos[1] + offset[1]
+                tx = tile_x - top_left_x
+                ty = tile_y - top_left_y
+                if 0 <= tx < VIEW_WIDTH and 0 <= ty < VIEW_HEIGHT:
+                    game_surface.blit(scaled_tile_images[Tile.BOAT], (tx * TILE_SIZE, ty * TILE_SIZE))
+            
+            # Render player sprite and steering wheel at player position
+            if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+                # Apply squish and bounce animation
+                if attack_animation_timer > 0:
+                    progress = attack_animation_timer / attack_animation_duration
+                    if progress > 0.5:
+                        # Squish phase (first half)
+                        t = (progress - 0.5) * 2  # Normalize to [0, 1]
+                        scale_x = 1 + (attack_squish_scale[0] - 1) * (1 - t)
+                        scale_y = 1 + (attack_squish_scale[1] - 1) * (1 - t)
+                    else:
+                        # Bounce phase (second half)
+                        t = progress * 2  # Normalize to [0, 1]
+                        scale_x = 1 + (attack_bounce_scale[0] - 1) * t
+                        scale_y = 1 + (attack_bounce_scale[1] - 1) * t
+                    # Scale the player sprite
+                    original_width, original_height = scaled_player_image.get_size()
+                    new_width = int(original_width * scale_x)
+                    new_height = int(original_height * scale_y)
+                    scaled_image = pygame.transform.scale(scaled_player_image, (new_width, new_height))
+                    # Adjust position to keep sprite centered
+                    px_adjusted = px * TILE_SIZE - (new_width - original_width) / 2
+                    py_adjusted = py * TILE_SIZE - (new_height - original_height) / 2
+                    game_surface.blit(scaled_image, (px_adjusted, py_adjusted))
+                else:
+                    # Normal rendering
+                    game_surface.blit(scaled_player_image, (px * TILE_SIZE, py * TILE_SIZE))
+                # Render steering wheel on top
+                game_surface.blit(scaled_tile_images[Tile.STEERING_WHEEL], (px * TILE_SIZE, py * TILE_SIZE))
 
 def show_game_over():
     global high_score, fade_done
@@ -2086,6 +2146,9 @@ def interact(button):
             return
 
     elif button == 3:  # Right-click: Attack
+        global attack_animation_timer
+        attack_triggered = False
+        attack_triggered = True
         damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))
         # Attack pirates
         for p in pirates:
@@ -2546,6 +2609,7 @@ while running:
         selected_tile = (world_tile_x, world_tile_y)
     else:
         selected_tile = None
+    attack_animation_timer = max(0, attack_animation_timer - dt)
     draw_grid()
     scaled_surface = pygame.transform.scale(game_surface, (WIDTH * SCALE, HEIGHT * SCALE))
     screen_width, screen_height = screen.get_size()
