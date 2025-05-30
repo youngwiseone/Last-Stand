@@ -258,6 +258,7 @@ projectiles = []
 projectile_speed = 0.2
 
 tree_growth = {}
+tree_health = {}  # Tracks health of trees: (x, y) -> health (default 3)
 sapling_growth_time = 30000
 
 land_spread = {}
@@ -525,23 +526,42 @@ def draw_grid():
             overlay_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
             overlay_surface.fill(overlay_color)
             game_surface.blit(overlay_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
-    if boulder_placement_mode and selected_tile:
-        sel_x, sel_y = selected_tile
-        sel_px = sel_x - top_left_x
-        sel_py = sel_y - top_left_y
-        if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
-            boulder_image = scaled_tile_images[Tile.BOULDER].copy()
-            boulder_image.set_alpha(128)
-            game_surface.blit(boulder_image, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
     if building_mode and selected_tile:
         sel_x, sel_y = selected_tile
         sel_px = sel_x - top_left_x
         sel_py = sel_y - top_left_y
         if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
-            item_image = scaled_tile_images[Tile.WOOD if building_mode == "wood" else Tile.METAL].copy()
-            item_image.set_alpha(128)
-            game_surface.blit(item_image, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
+            # Map building_mode to default tile type
+            mode_to_tile = {
+                "sapling": Tile.SAPLING,
+                "wood": Tile.WOOD,
+                "metal": Tile.METAL,
+                "boulder": Tile.BOULDER
+            }
+            target_tile = world.get_tile(sel_x, sel_y)
+            # Default preview tile is based on building_mode
+            preview_tile = mode_to_tile.get(building_mode)
+            # Handle special placement cases
+            if building_mode == "wood":
+                if target_tile == Tile.BOULDER:
+                    preview_tile = Tile.WALL
+                elif target_tile == Tile.WATER and has_adjacent_boat_or_land(sel_x, sel_y):
+                    preview_tile = Tile.BOAT
+                elif target_tile == Tile.BOAT:
+                    preview_tile = Tile.STEERING_WHEEL
+            elif building_mode == "metal" and target_tile == Tile.WOOD:
+                preview_tile = Tile.TURRET
+            # Render preview if valid placement
+            if preview_tile and (
+                (building_mode in ["sapling", "boulder"] and target_tile == Tile.LAND) or
+                (building_mode == "wood" and target_tile in [Tile.LAND, Tile.BOULDER, Tile.BOAT] or 
+                (target_tile == Tile.WATER and has_adjacent_boat_or_land(sel_x, sel_y))) or
+                (building_mode == "metal" and target_tile in [Tile.LAND, Tile.WOOD])
+            ):
+                item_image = scaled_tile_images[preview_tile].copy()
+                item_image.set_alpha(128)
+                game_surface.blit(item_image, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
     # Render floating text and images (wood and XP)
     for text in wood_texts:
@@ -1964,7 +1984,25 @@ def interact(button):
     if button == 1:  # Left-click: Pick up items or build
         # Handle building mode placements
         if building_mode:
-            if building_mode == "wood":
+            if building_mode == "boulder":
+                if tile == Tile.LAND:
+                    world.set_tile(x, y, Tile.BOULDER)
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                return
+            elif building_mode == "sapling":
+                if tile == Tile.LAND:
+                    world.set_tile(x, y, Tile.SAPLING)
+                    tree_growth[(x, y)] = pygame.time.get_ticks()
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                    sound_plant_sapling.play()
+                return
+            elif building_mode == "wood":
                 if tile == Tile.LAND:
                     world.set_tile(x, y, Tile.WOOD)
                     building_mode = None
@@ -2027,8 +2065,23 @@ def interact(button):
                     interaction_ui["alpha"] = 0
                     sound_place_turret.play()
                     return
+            elif building_mode == "sapling":
+                if tile == Tile.LAND:
+                    world.set_tile(x, y, Tile.SAPLING)
+                    building_mode = None
+                    carried_item_pos = None
+                    interaction_ui["left_message"] = ""
+                    interaction_ui["alpha"] = 0
+                    return
             return  # Exit if no valid placement to prevent pickup
-
+        # Pick up Boulder tile (only when not in building_mode)
+        if tile == Tile.BOULDER and not building_mode:
+            building_mode = "boulder"
+            carried_item_pos = (x, y)
+            world.set_tile(x, y, Tile.LAND)
+            interaction_ui["left_message"] = "Place Boulder (Left Click)\nCancel (Right Click)"
+            interaction_ui["alpha"] = 255
+            return
         # Pick up Wood or Metal tile (only when not in building_mode)
         if tile in (Tile.WOOD, Tile.METAL):
             building_mode = "wood" if tile == Tile.WOOD else "metal"
@@ -2089,7 +2142,7 @@ def interact(button):
             world.set_tile(x, y, Tile.LAND)
             interaction_ui["left_message"] = f"Place {building_mode.capitalize()} (Left Click)\nCancel (Right Click)"
             interaction_ui["alpha"] = 255
-            return
+            return        
 
     elif button == 3:  # Right-click: Attack
         damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))
@@ -2150,13 +2203,49 @@ def interact(button):
                             print(f"Pirate killed, quest progress: {quests['pirate_hunter_quest_count']}/{5 + (quests.get('pirate_hunter_quest_completed', 0) * 2)}")
                         explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
                     return
+        if tile == Tile.LAND:
+            building_mode = "sapling"
+            carried_item_pos = (x, y)
+            world.set_tile(x, y, Tile.USED_LAND)
+            wood -= 1
+            interaction_ui["left_message"] = "Place Sapling (Left Click)\nCancel (Right Click)"
+            interaction_ui["alpha"] = 255
+            return
         # Attack tree
         if tile == Tile.TREE:
-            if random.random() < 0.5:
-                world.set_tile(x, y, Tile.WOOD)
+            # Find adjacent land tiles
+            neighbors = [(x, y-1), (x, y+1), (x-1, y), (x+1, y)]
+            free_land = None
+            for nx, ny in neighbors:
+                if world.get_tile(nx, ny) == Tile.LAND:
+                    free_land = (nx, ny)
+                    break
+            if free_land:
+                # Place wood on the free land tile
+                world.set_tile(free_land[0], free_land[1], Tile.WOOD)
+                # Reduce tree health
+                tree_pos = (x, y)
+                tree_health[tree_pos] = tree_health.get(tree_pos, 3) - 1
+                if tree_health[tree_pos] <= 0:
+                    world.set_tile(x, y, Tile.LAND)
+                    del tree_health[tree_pos]
+                # Add wood gain text
+                wood_texts.append({
+                    "x": free_land[0],
+                    "y": free_land[1],
+                    "image_key": Tile.WOOD,  # Use wood image
+                    "timer": 1000,
+                    "alpha": 255
+                })
             else:
-                world.set_tile(x, y, Tile.SAPLING)
-                tree_growth[(x, y)] = pygame.time.get_ticks()
+                # No space for wood
+                wood_texts.append({
+                    "x": x,
+                    "y": y,
+                    "text": "No space for wood!",
+                    "timer": 1000,
+                    "alpha": 255
+                })
             return
         # Attack sapling
         if tile == Tile.SAPLING:
@@ -2168,7 +2257,7 @@ def interact(button):
                 del tree_growth[(x, y)]
             return
         # Attack boulder
-        if tile == Tile.BOULDER:
+        if tile == Tile.BOULDER and not building_mode:
             if random.random() < 0.33:
                 world.set_tile(x, y, Tile.METAL)
             else:
@@ -2211,7 +2300,13 @@ def interact(button):
             return
         # Cancel building mode
         if building_mode and carried_item_pos:
-            world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.WOOD if building_mode == "wood" else Tile.METAL)
+            if building_mode in ["wood", "metal"]:
+                world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.WOOD if building_mode == "wood" else Tile.METAL)
+            elif building_mode == "sapling":
+                world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.LAND)
+                wood += 1
+            elif building_mode == "boulder":
+                world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.BOULDER)
             building_mode = None
             carried_item_pos = None
             interaction_ui["left_message"] = ""
@@ -2273,7 +2368,11 @@ def update_interaction_ui():
     interaction_ui["right_message"] = ""
 
     if building_mode:
-        if building_mode == "wood":
+        if building_mode == "sapling":
+            if tile == Tile.LAND:
+                interaction_ui["left_message"] = "Place Sapling\n(Left Click)"
+                interaction_ui["alpha"] = 255
+        elif building_mode == "wood":
             if tile == Tile.LAND:
                 interaction_ui["left_message"] = "Place Wood\n(Left Click)"
             elif tile == Tile.BOULDER:
@@ -2285,17 +2384,16 @@ def update_interaction_ui():
                 interaction_ui["left_message"] = "Place Wood\nBuild Boat Tile\n(Left Click)"
             elif tile == Tile.BOAT:
                 interaction_ui["left_message"] = "Place Wood\nBuild Steering Wheel\n(Left Click)"
-            if interaction_ui["left_message"]:
-                interaction_ui["alpha"] = 255
-            return
         elif building_mode == "metal":
             if tile == Tile.LAND:
                 interaction_ui["left_message"] = "Place Metal\n(Left Click)"
             elif tile == Tile.WOOD:
                 interaction_ui["left_message"] = "Place Metal\nBuild Turret\n(Left Click)"
-            if interaction_ui["left_message"]:
-                interaction_ui["alpha"] = 255
-            return
+        elif building_mode == "boulder":
+            if tile == Tile.LAND:
+                interaction_ui["left_message"] = "Place Boulder\n(Left Click)"
+        if interaction_ui["left_message"]:
+            interaction_ui["alpha"] = 255
         return
 
     if tile == Tile.FISH and has_fishing_rod:
@@ -2356,6 +2454,7 @@ def update_trees():
     to_grow = [pos for pos, t in tree_growth.items() if now - t >= sapling_growth_time]
     for pos in to_grow:
         world.set_tile(pos[0], pos[1], Tile.TREE)
+        tree_health[pos] = 3  # Initialize tree with 3 health
         del tree_growth[pos]
 
 def update_player_movement():
