@@ -1989,8 +1989,6 @@ def interact(button):
                     world.set_tile(x, y, Tile.BOULDER)
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                 return
             elif building_mode == "sapling":
                 if tile == Tile.LAND:
@@ -1998,8 +1996,6 @@ def interact(button):
                     tree_growth[(x, y)] = pygame.time.get_ticks()
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                     sound_plant_sapling.play()
                 return
             elif building_mode == "wood":
@@ -2007,8 +2003,6 @@ def interact(button):
                     world.set_tile(x, y, Tile.WOOD)
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                     return
                 elif tile == Tile.BOULDER:
                     world.set_tile(x, y, Tile.WALL)
@@ -2016,8 +2010,6 @@ def interact(button):
                     tiles_placed += 1
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                     return
                 elif tile == Tile.WALL:
                     current_level = wall_levels.get((x, y), 1)
@@ -2026,16 +2018,12 @@ def interact(button):
                         tiles_placed += 1
                         building_mode = None
                         carried_item_pos = None
-                        interaction_ui["left_message"] = ""
-                        interaction_ui["alpha"] = 0
                         return
                 elif tile == Tile.WATER and has_adjacent_boat_or_land(x, y):
                     world.set_tile(x, y, Tile.BOAT)
                     tiles_placed += 1
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                     sound_place_land.play()
                     return
                 elif tile == Tile.BOAT:
@@ -2043,16 +2031,12 @@ def interact(button):
                     tiles_placed += 1
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                     return
             elif building_mode == "metal":
                 if tile == Tile.LAND:
                     world.set_tile(x, y, Tile.METAL)
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                     return
                 elif tile == Tile.WOOD:
                     world.set_tile(x, y, Tile.TURRET)
@@ -2061,8 +2045,6 @@ def interact(button):
                     turrets_placed += 1
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                     sound_place_turret.play()
                     return
             elif building_mode == "sapling":
@@ -2070,8 +2052,6 @@ def interact(button):
                     world.set_tile(x, y, Tile.SAPLING)
                     building_mode = None
                     carried_item_pos = None
-                    interaction_ui["left_message"] = ""
-                    interaction_ui["alpha"] = 0
                     return
             return  # Exit if no valid placement to prevent pickup
         # Pick up Boulder tile (only when not in building_mode)
@@ -2079,16 +2059,12 @@ def interact(button):
             building_mode = "boulder"
             carried_item_pos = (x, y)
             world.set_tile(x, y, Tile.LAND)
-            interaction_ui["left_message"] = "Place Boulder (Left Click)\nCancel (Right Click)"
-            interaction_ui["alpha"] = 255
             return
         # Pick up Wood or Metal tile (only when not in building_mode)
         if tile in (Tile.WOOD, Tile.METAL):
             building_mode = "wood" if tile == Tile.WOOD else "metal"
             carried_item_pos = (x, y)
             world.set_tile(x, y, Tile.LAND)  # Remove the item from the map
-            interaction_ui["left_message"] = f"Place {building_mode.capitalize()} (Left Click)\nCancel (Right Click)"
-            interaction_ui["alpha"] = 255
             return
         # Handle fishing
         if tile == Tile.FISH and has_fishing_rod:
@@ -2107,8 +2083,6 @@ def interact(button):
                     })
                     fishing_state = None
                     bobber = None
-                    interaction_ui["left_message"] = f"Place {building_mode.capitalize()} (Left Click)\nCancel (Right Click)"
-                    interaction_ui["alpha"] = 255
                     return
                 elif not fishing_state:
                     fishing_state = "casting"
@@ -2140,8 +2114,6 @@ def interact(button):
             building_mode = random.choice(["wood", "metal"])
             carried_item_pos = (x, y)
             world.set_tile(x, y, Tile.LAND)
-            interaction_ui["left_message"] = f"Place {building_mode.capitalize()} (Left Click)\nCancel (Right Click)"
-            interaction_ui["alpha"] = 255
             return        
 
     elif button == 3:  # Right-click: Attack
@@ -2208,8 +2180,6 @@ def interact(button):
             carried_item_pos = (x, y)
             world.set_tile(x, y, Tile.USED_LAND)
             wood -= 1
-            interaction_ui["left_message"] = "Place Sapling (Left Click)\nCancel (Right Click)"
-            interaction_ui["alpha"] = 255
             return
         # Attack tree
         if tile == Tile.TREE:
@@ -2309,8 +2279,6 @@ def interact(button):
                 world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.BOULDER)
             building_mode = None
             carried_item_pos = None
-            interaction_ui["left_message"] = ""
-            interaction_ui["alpha"] = 0
             return
         # Cancel fishing
         if fishing_state:
