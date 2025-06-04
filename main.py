@@ -54,6 +54,8 @@ explosions = []
 sparks = []
 hat_particles = []
 hat_tiles = {}
+player_invul_timer = 0  # Milliseconds of safety after the player's hat is lost
+BASE_HAT_INVUL_TIME = 2000  # Provide 2 seconds of invulnerability when a hat is knocked off
 
 # --- Sounds ---
 sound_place_land = pygame.mixer.Sound(SOUND_FILES["place_land"])
@@ -1382,7 +1384,7 @@ def spawn_kraken():
     })
 
 def update_pirates():
-    global game_over, pirates, pirates_killed, player_hat, hat_particles, hat_tiles
+    global game_over, pirates, pirates_killed, player_hat, hat_particles, hat_tiles, player_invul_timer
     now = pygame.time.get_ticks()
     for p in pirates[:]:
         if p["state"] == "boat":
@@ -1468,7 +1470,7 @@ def update_pirates():
                 # Check if pirate touches the player (normal or non-turret_breaker)
                 if not (is_rare and rare_type == "turret_breaker"):
                     dist = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
-                    if dist < 0.5:
+                    if dist < 0.5 and player_invul_timer <= 0:
                         if player_hat:
                             hat_particles.append({
                                 "x": player_pos[0],
@@ -1482,6 +1484,8 @@ def update_pirates():
                                 "level": player_hat["level"],
                                 "rare_type": player_hat.get("rare_type")
                             })
+                            apply_hat_loss_effect(player_hat)
+                            player_invul_timer = BASE_HAT_INVUL_TIME
                             player_hat = None
                         else:
                             game_over = True
@@ -2020,6 +2024,23 @@ def update_xp_texts():
         text["alpha"] = int((text["timer"] / 1000) * 255)
         text["alpha"] = max(0, min(255, text["alpha"]))
 
+def explode_at(x, y):
+    """Create an explosion at the given coordinates and turn nearby tiles to water."""
+    for dy in range(-1, 2):
+        for dx in range(-1, 2):
+            tx, ty = int(x) + dx, int(y) + dy
+            if world.get_tile(tx, ty) != Tile.WATER:
+                world.set_tile(tx, ty, Tile.WATER)
+    explosions.append({"x": x, "y": y, "timer": 500})
+
+def apply_hat_loss_effect(hat):
+    """Trigger special effects when a rare hat is lost."""
+    rare_type = hat.get("rare_type")
+    if not rare_type:
+        return
+    if rare_type == "explosive":
+        explode_at(player_pos[0], player_pos[1])
+
 def has_adjacent_boat_or_land(x, y):
     # Check if the tile at (x, y) has a BOAT_TILE or LAND tile in cardinal directions.
     neighbors = [(x, y-1), (x, y+1), (x-1, y), (x+1, y)]  # Up, down, left, right
@@ -2234,6 +2255,8 @@ def interact(button):
 
     elif button == 3:  # Right-click: Attack
         damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))
+        if player_hat and player_hat.get("rare_type") == "turret_breaker":
+            damage = int(damage * 1.5)
         # Attack pirates
         for p in pirates:
             for pirate in p["pirates"][:]:
@@ -2574,7 +2597,10 @@ def update_player_movement():
     
     if in_boat_mode:
         base_speed = 0.05  # Match pirate ship speed
-        speed = base_speed * get_speed_multiplier()
+        speed_multiplier = get_speed_multiplier()
+        if player_hat and player_hat.get("rare_type") == "speedy":
+            speed_multiplier *= 1.5
+        speed = base_speed * speed_multiplier
         if keys[pygame.K_w]:
             dy -= speed
         if keys[pygame.K_s]:
@@ -2608,7 +2634,10 @@ def update_player_movement():
                     world.manage_chunks()
     else:
         base_speed = 0.15
-        speed = base_speed * get_speed_multiplier()
+        speed_multiplier = get_speed_multiplier()
+        if player_hat and player_hat.get("rare_type") == "speedy":
+            speed_multiplier *= 1.5
+        speed = base_speed * speed_multiplier
         if keys[pygame.K_w]:
             dy -= speed
         if keys[pygame.K_s]:
@@ -2623,6 +2652,10 @@ def update_player_movement():
                 dx, dy = dx / length * speed, dy / length * speed
             facing = [dx, dy] if dx != 0 or dy != 0 else facing
         new_x, new_y = player_pos[0] + dx, player_pos[1] + dy
+        if player_hat and player_hat.get("rare_type") == "bridge_builder":
+            tx, ty = int(new_x + 0.5), int(new_y + 0.5)
+            if world.get_tile(tx, ty) == Tile.WATER and has_adjacent_boat_or_land(tx, ty):
+                world.set_tile(tx, ty, Tile.BOAT)
         if is_on_land((new_x, new_y)):
             old_chunk = world.player_chunk
             player_pos[0], player_pos[1] = new_x, new_y
@@ -2708,6 +2741,8 @@ def update_music():
 running = True
 while running:
     dt = clock.get_time()  # Compute delta time once per frame
+    if player_invul_timer > 0:
+        player_invul_timer = max(0, player_invul_timer - dt)
     if game_over:
         if not fade_done:
             show_game_over()
