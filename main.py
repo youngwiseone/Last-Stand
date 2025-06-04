@@ -11,7 +11,14 @@ from npc import NPCManager
 
 # --- Init ---
 pygame.init()
-pygame.mixer.init()
+
+try:
+    # Try to initialize with default audio driver
+    pygame.mixer.init()
+except pygame.error:
+    print("Audio device not found. Using dummy audio driver.")
+    os.environ["SDL_AUDIODRIVER"] = "dummy"
+    pygame.mixer.init()
 
 def adjust_sprite_for_rare(sprite, rare_type):
     """Overlay a color specific to rare_type at 50% opacity, preserving alpha."""
