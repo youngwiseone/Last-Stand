@@ -53,6 +53,7 @@ xp_texts = []
 explosions = []
 sparks = []
 hat_particles = []
+hat_tiles = {}
 
 # --- Sounds ---
 sound_place_land = pygame.mixer.Sound(SOUND_FILES["place_land"])
@@ -130,6 +131,11 @@ scaled_tile_images[Tile.WATER] = scaled_water_frames[water_frame]
 
 scaled_player_image = pygame.transform.scale(player_image, (TILE_SIZE, TILE_SIZE))
 scaled_player_fishing_image = pygame.transform.scale(player_fishing_image, (TILE_SIZE, TILE_SIZE))
+colored_player_images = {}
+colored_player_fishing_images = {}
+for rare_type in RARE_PIRATE_TYPES:
+    colored_player_images[rare_type] = pygame.transform.scale(adjust_sprite_for_rare(player_image, rare_type), (TILE_SIZE, TILE_SIZE))
+    colored_player_fishing_images[rare_type] = pygame.transform.scale(adjust_sprite_for_rare(player_fishing_image, rare_type), (TILE_SIZE, TILE_SIZE))
 
 scaled_pirate_sprites = {}
 for key, sprite in pirate_sprites.items():
@@ -138,6 +144,12 @@ for key, sprite in pirate_sprites.items():
 scaled_pirate_hat_images = {}
 for level, hat_image in pirate_hat_images.items():
     scaled_pirate_hat_images[level] = pygame.transform.scale(hat_image, (TILE_SIZE, TILE_SIZE))
+
+scaled_colored_hat_images = {}
+for level, hat_image in pirate_hat_images.items():
+    for rare_type in RARE_PIRATE_TYPES:
+        colored = adjust_sprite_for_rare(hat_image, rare_type)
+        scaled_colored_hat_images[(level, rare_type)] = pygame.transform.scale(colored, (TILE_SIZE, TILE_SIZE))
 
 npc_sprites = {}
 for npc_type, sprite_key in [
@@ -219,6 +231,8 @@ interaction_ui_enabled = False
 
 building_mode = None  # None, "wood", or "metal"
 carried_item_pos = None  # Stores the position of the picked-up Wood or Metal tile
+carried_hat = None  # Hat data being carried
+player_hat = None   # Hat currently worn
 
 has_fishing_rod = False  # Tracks if player has the fishing rod
 fish_tiles = []  # List of active fish tiles: {"x": x, "y": y, "spawn_time": time}
@@ -363,11 +377,16 @@ def draw_grid():
                     fish_image.set_alpha(alpha)
                 game_surface.blit(fish_image, rect)
             else:
-                image = scaled_tile_images.get(tile)
-                if image:
-                    game_surface.blit(image, rect)
+                if tile == Tile.HAT:
+                    land_img = scaled_tile_images.get(Tile.LAND)
+                    if land_img:
+                        game_surface.blit(land_img, rect)
                 else:
-                    pygame.draw.rect(game_surface, BLACK, rect)
+                    image = scaled_tile_images.get(tile)
+                    if image:
+                        game_surface.blit(image, rect)
+                    else:
+                        pygame.draw.rect(game_surface, BLACK, rect)
 
     # Second pass: Render underlay tiles without darkness
     for y in range(VIEW_HEIGHT):
@@ -380,7 +399,7 @@ def draw_grid():
                 py = (y + 1 - (top_left_y - start_y)) * TILE_SIZE
                 under_rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
                 tile = world.get_tile(gx, gy)
-                if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.METAL, Tile.WOOD]:
+                if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.METAL, Tile.WOOD, Tile.HAT]:
                     under_land_image = scaled_tile_images.get("UNDER_LAND")
                     if under_land_image:
                         game_surface.blit(under_land_image, under_rect)
@@ -397,14 +416,14 @@ def draw_grid():
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-            if tile in [Tile.TURRET, Tile.TREE, Tile.SAPLING, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL]:
+            if tile in [Tile.TURRET, Tile.TREE, Tile.SAPLING, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL, Tile.HAT]:
                 # Render the base tile underneath
                 if tile == Tile.STEERING_WHEEL:
                     # For STEERING_WHEEL, render BOAT_TILE underneath
                     boat_image = scaled_tile_images.get(Tile.BOAT)
                     if boat_image:
                         game_surface.blit(boat_image, rect)
-                else:
+                elif tile != Tile.HAT:
                     # For other tiles, render LAND underneath
                     land_image = scaled_tile_images.get(Tile.LAND)
                     if land_image:
@@ -414,7 +433,17 @@ def draw_grid():
                     below_tile = world.get_tile(gx, gy + 1)
                     overlay_image = scaled_tile_images["WALL_TOP"] if below_tile == Tile.WALL else scaled_tile_images[Tile.WALL]
                 else:
-                    overlay_image = scaled_tile_images.get(tile)
+                    if tile == Tile.HAT:
+                        hat_info = hat_tiles.get((gx, gy))
+                        if hat_info:
+                            if hat_info.get("rare_type"):
+                                overlay_image = scaled_colored_hat_images[(hat_info["level"], hat_info["rare_type"])]
+                            else:
+                                overlay_image = scaled_pirate_hat_images[hat_info["level"]]
+                        else:
+                            overlay_image = None
+                    else:
+                        overlay_image = scaled_tile_images.get(tile)
                 if overlay_image:
                     game_surface.blit(overlay_image, rect)
             if tile == Tile.TURRET:
@@ -614,7 +643,10 @@ def draw_grid():
         py = hat["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
             hat_level = hat["level"]
-            hat_image = scaled_pirate_hat_images[hat_level]
+            if hat.get("rare_type"):
+                hat_image = scaled_colored_hat_images[(hat_level, hat["rare_type"])]
+            else:
+                hat_image = scaled_pirate_hat_images[hat_level]
             rotated_hat = pygame.transform.rotate(hat_image, hat["rotation"])
             alpha = int((hat["timer"] / hat["initial_timer"]) * 255)
             alpha = max(0, min(255, alpha))
@@ -839,9 +871,20 @@ def draw_player(top_left_x, top_left_y):
 
     if not in_boat_mode:
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            # Select sprite based on fishing state
-            current_player_image = scaled_player_fishing_image if fishing_state else scaled_player_image
+            # Select sprite based on fishing state and rare color
+            if player_hat and player_hat.get("rare_type"):
+                img_dict = colored_player_fishing_images if fishing_state else colored_player_images
+                current_player_image = img_dict[player_hat["rare_type"]]
+            else:
+                current_player_image = scaled_player_fishing_image if fishing_state else scaled_player_image
             game_surface.blit(current_player_image, (px * TILE_SIZE, py * TILE_SIZE))
+            if player_hat:
+                if player_hat.get("rare_type"):
+                    hat_img = scaled_colored_hat_images[(player_hat["level"], player_hat["rare_type"])]
+                else:
+                    hat_img = scaled_pirate_hat_images[player_hat["level"]]
+                hat_rect = hat_img.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE))
+                game_surface.blit(hat_img, hat_rect.topleft)
     else:
         if boat_entity:
             # Render all boat tiles, including one under the steering wheel position
@@ -855,8 +898,18 @@ def draw_player(top_left_x, top_left_y):
             
             # Render player sprite and steering wheel at player position
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-                game_surface.blit(scaled_player_image, (px * TILE_SIZE, py * TILE_SIZE))
+                player_img = scaled_player_image
+                if player_hat and player_hat.get("rare_type"):
+                    player_img = colored_player_images[player_hat["rare_type"]]
+                game_surface.blit(player_img, (px * TILE_SIZE, py * TILE_SIZE))
                 game_surface.blit(scaled_tile_images[Tile.STEERING_WHEEL], (px * TILE_SIZE, py * TILE_SIZE))
+                if player_hat:
+                    if player_hat.get("rare_type"):
+                        hat_img = scaled_colored_hat_images[(player_hat["level"], player_hat["rare_type"])]
+                    else:
+                        hat_img = scaled_pirate_hat_images[player_hat["level"]]
+                    hat_rect = hat_img.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE))
+                    game_surface.blit(hat_img, hat_rect.topleft)
 
 def show_game_over():
     global high_score, fade_done
@@ -1329,7 +1382,7 @@ def spawn_kraken():
     })
 
 def update_pirates():
-    global game_over, pirates, pirates_killed
+    global game_over, pirates, pirates_killed, player_hat, hat_particles, hat_tiles
     now = pygame.time.get_ticks()
     for p in pirates[:]:
         if p["state"] == "boat":
@@ -1416,8 +1469,23 @@ def update_pirates():
                 if not (is_rare and rare_type == "turret_breaker"):
                     dist = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
                     if dist < 0.5:
-                        game_over = True
-                        return
+                        if player_hat:
+                            hat_particles.append({
+                                "x": player_pos[0],
+                                "y": player_pos[1] - 0.5,
+                                "vel_x": random.uniform(-0.05, 0.05),
+                                "vel_y": -0.1,
+                                "rotation": 0,
+                                "rotation_speed": random.uniform(-10, 10),
+                                "timer": 1000,
+                                "initial_timer": 1000,
+                                "level": player_hat["level"],
+                                "rare_type": player_hat.get("rare_type")
+                            })
+                            player_hat = None
+                        else:
+                            game_over = True
+                            return
                 if pirate["move_progress"] >= 1.0:
                     # Turret Breaker: Target nearest turret
                     target_x, target_y = int(pirate["x"]), int(pirate["y"])
@@ -1748,8 +1816,12 @@ def update_projectiles():
                             "rotation_speed": random.uniform(-10, 10),
                             "timer": 1000,
                             "initial_timer": 1000,
-                            "level": pirate["level"]
+                            "level": pirate["level"],
+                            "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None
                         })
+                        if world.get_tile(int(pirate["x"]), int(pirate["y"])) == Tile.LAND and random.random() < 0.5:
+                            world.set_tile(int(pirate["x"]), int(pirate["y"]), Tile.HAT)
+                            hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
                         pirate["has_dropped_hat"] = True
                     if pirate["health"] <= 0 and not pirate.get("has_dropped_hat", False):
                         # Lethal hit and no hat dropped yet, spawn hat
@@ -1762,8 +1834,12 @@ def update_projectiles():
                             "rotation_speed": random.uniform(-10, 10),
                             "timer": 1000,
                             "initial_timer": 1000,
-                            "level": pirate["level"]
+                            "level": pirate["level"],
+                            "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None
                         })
+                        if world.get_tile(int(pirate["x"]), int(pirate["y"])) == Tile.LAND and random.random() < 0.5:
+                            world.set_tile(int(pirate["x"]), int(pirate["y"]), Tile.HAT)
+                            hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
                         pirate["has_dropped_hat"] = True
                     if pirate["health"] <= 0:
                         if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
@@ -1954,7 +2030,7 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests
+    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests, carried_hat, player_hat, hat_tiles
     if in_dialogue:
         return
     if not selected_tile:
@@ -2067,6 +2143,39 @@ def interact(button):
             carried_item_pos = (x, y)
             world.set_tile(x, y, Tile.LAND)
             return
+        # If carrying a hat, handle placement or wearing
+        if carried_hat:
+            player_tile = (int(player_pos[0]), int(player_pos[1]))
+            if (x, y) == player_tile:
+                if player_hat:
+                    temp = player_hat
+                    player_hat = carried_hat
+                    carried_hat = temp
+                else:
+                    player_hat = carried_hat
+                    carried_hat = None
+                return
+            elif world.get_tile(x, y) == Tile.LAND:
+                world.set_tile(x, y, Tile.HAT)
+                hat_tiles[(x, y)] = carried_hat
+                carried_hat = None
+                return
+            elif world.get_tile(x, y) == Tile.WATER:
+                carried_hat = None
+                return
+
+        # Pick up hat tile
+        if tile == Tile.HAT:
+            carried_hat = hat_tiles.pop((x, y), None)
+            world.set_tile(x, y, Tile.LAND)
+            return
+
+        # Remove hat from player
+        player_tile = (int(player_pos[0]), int(player_pos[1]))
+        if (x, y) == player_tile and player_hat and not carried_hat:
+            carried_hat = player_hat
+            player_hat = None
+            return
         # Pick up Wood or Metal tile (only when not in building_mode)
         if tile in (Tile.WOOD, Tile.METAL):
             building_mode = "wood" if tile == Tile.WOOD else "metal"
@@ -2142,8 +2251,12 @@ def interact(button):
                             "rotation_speed": random.uniform(-10, 10),
                             "timer": 1000,
                             "initial_timer": 1000,
-                            "level": pirate["level"]
+                            "level": pirate["level"],
+                            "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None
                         })
+                        if world.get_tile(int(pirate["x"]), int(pirate["y"])) == Tile.LAND and random.random() < 0.5:
+                            world.set_tile(int(pirate["x"]), int(pirate["y"]), Tile.HAT)
+                            hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
                         pirate["has_dropped_hat"] = True
                     if pirate["health"] <= 0:
                         if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
@@ -2371,6 +2484,24 @@ def update_interaction_ui():
             interaction_ui["alpha"] = 255
         return
 
+    if carried_hat:
+        player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
+        if (x, y) == (player_tile_x, player_tile_y):
+            msg = "Switch Hat" if player_hat else "Wear Hat"
+            interaction_ui["left_message"] = f"{msg}\n(Left Click)"
+        elif tile == Tile.LAND:
+            interaction_ui["left_message"] = "Place Hat\n(Left Click)"
+        elif tile == Tile.WATER:
+            interaction_ui["left_message"] = "Discard Hat\n(Left Click)"
+        if interaction_ui["left_message"]:
+            interaction_ui["alpha"] = 255
+        return
+
+    if (x, y) == (int(player_pos[0]), int(player_pos[1])) and player_hat:
+        interaction_ui["left_message"] = "Remove Hat\n(Left Click)"
+        interaction_ui["alpha"] = 255
+        return
+
     if tile == Tile.FISH and has_fishing_rod:
         interaction_ui["left_message"] = "Fish for Item\n(Left Click)"
         interaction_ui["alpha"] = 255
@@ -2380,6 +2511,8 @@ def update_interaction_ui():
         return
     elif tile == Tile.STEERING_WHEEL:
         interaction_ui["left_message"] = "Steer Boat\n(Left Click)"
+    elif tile == Tile.HAT:
+        interaction_ui["left_message"] = "Pick up Hat\n(Left Click)"
     elif tile in (Tile.WOOD, Tile.METAL):
         interaction_ui["left_message"] = f"Pick up { 'Wood' if tile == Tile.WOOD else 'Metal' }\n(Left Click)"
     elif tile in (Tile.TREE, Tile.SAPLING):

@@ -80,18 +80,21 @@ class Tile(IntEnum):
     STEERING_WHEEL = 13  # Steering wheel tile for boat control
     WOOD = 14  # Tile for Wood
     METAL = 15  # Tile for Metal
+    HAT = 16  # Pirate hat sitting on land
 
 # --- Movement and Land Tiles ---
 # Tile sets defining valid tiles for movement and boat tile adjacency. Used for pathfinding and placement rules.
 MOVEMENT_TILES = (
     Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.LAND,
     Tile.USED_LAND, Tile.LOOT, Tile.SAPLING, Tile.TURRET,
-    Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL
+    Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL,
+    Tile.HAT
 )  # Tiles that entities can move onto
 LAND_TILES = (
     Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.LAND,
     Tile.USED_LAND, Tile.LOOT, Tile.SAPLING, Tile.TREE,
-    Tile.TURRET, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL
+    Tile.TURRET, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL,
+    Tile.HAT
 )  # Tiles considered adjacent for boat placement
 
 # --- Sound Files ---
