@@ -1023,6 +1023,24 @@ def is_on_land(pos):
             return False
     return True
 
+def get_player_occupied_tiles(pos=None):
+    """Return a set of world tiles currently occupied by the player."""
+    if pos is None:
+        pos = player_pos
+    hitbox_half_size = 0.15625
+    center_x = pos[0] + 0.5
+    center_y = pos[1] + 0.5
+    corners = [
+        (center_x - hitbox_half_size, center_y - hitbox_half_size),
+        (center_x + hitbox_half_size, center_y - hitbox_half_size),
+        (center_x - hitbox_half_size, center_y + hitbox_half_size),
+        (center_x + hitbox_half_size, center_y + hitbox_half_size)
+    ]
+    tiles = set()
+    for cx, cy in corners:
+        tiles.add((math.floor(cx), math.floor(cy)))
+    return tiles
+
 def find_connected_boat_tiles(start_x, start_y, max_depth=6):
     visited = set()
     frontier = [(start_x, start_y, 0)]
@@ -2124,6 +2142,8 @@ def interact(button):
     if button == 1:  # Left-click: Pick up items or build
         # Handle building mode placements
         if building_mode:
+            if (x, y) in get_player_occupied_tiles():
+                return
             if building_mode == "boulder":
                 if tile == Tile.LAND:
                     world.set_tile(x, y, Tile.BOULDER)
@@ -2202,8 +2222,7 @@ def interact(button):
             return
         # If carrying a hat, handle placement or wearing
         if carried_hat:
-            player_tile = (int(player_pos[0]), int(player_pos[1]))
-            if (x, y) == player_tile:
+            if (x, y) in get_player_occupied_tiles():
                 if player_hat:
                     temp = player_hat
                     player_hat = carried_hat
@@ -2412,20 +2431,16 @@ def interact(button):
             else:
                 world.set_tile(x, y, Tile.LAND)
             return
-        # Attack wall
+        # Attack or weaken wall
         if tile == Tile.WALL:
             wall_pos = (x, y)
-            last_damaged = wall_damage_timers.get(wall_pos, 0)
-            now = pygame.time.get_ticks()
-            if now - last_damaged >= 1000:  # Damage every second
-                current_level = wall_levels.get(wall_pos, 1)
-                if current_level > 1:
-                    wall_levels[wall_pos] = current_level - 1
-                else:
-                    world.set_tile(x, y, Tile.BOULDER)
-                    if wall_pos in wall_levels:
-                        del wall_levels[wall_pos]
-                wall_damage_timers[wall_pos] = now
+            current_level = wall_levels.get(wall_pos, 1)
+            if current_level > 1:
+                wall_levels[wall_pos] = current_level - 1
+            else:
+                world.set_tile(x, y, Tile.BOULDER)
+                if wall_pos in wall_levels:
+                    del wall_levels[wall_pos]
             return
         # Attack turret
         if tile == Tile.TURRET:
@@ -2610,7 +2625,7 @@ def plant_sapling():
     if not selected_tile:
         return
     x, y = selected_tile
-    if world.get_tile(x, y) == Tile.LAND and wood >= 1:
+    if world.get_tile(x, y) == Tile.LAND and wood >= 1 and (x, y) not in get_player_occupied_tiles():
         world.set_tile(x, y, Tile.SAPLING)
         tree_growth[(x, y)] = pygame.time.get_ticks()
         wood -= 1
@@ -2620,8 +2635,12 @@ def update_trees():
     now = pygame.time.get_ticks()
     to_grow = [pos for pos, t in tree_growth.items() if now - t >= sapling_growth_time]
     for pos in to_grow:
-        world.set_tile(pos[0], pos[1], Tile.TREE)
-        tree_health[pos] = 3  # Initialize tree with 3 health
+        if pos in get_player_occupied_tiles():
+            # Prevent trapping the player by leaving the tile as land
+            world.set_tile(pos[0], pos[1], Tile.LAND)
+        else:
+            world.set_tile(pos[0], pos[1], Tile.TREE)
+            tree_health[pos] = 3  # Initialize tree with 3 health
         del tree_growth[pos]
 
 def update_player_movement():
