@@ -237,6 +237,7 @@ carried_hat = None  # Hat data being carried
 player_hat = None   # Hat currently worn
 
 has_fishing_rod = False  # Tracks if player has the fishing rod
+has_fishing_rod_upgrade = False  # Upgraded rod halves fishing wait time
 fish_tiles = []  # List of active fish tiles: {"x": x, "y": y, "spawn_time": time}
 fish_caught = 0  # Total fish caught by player
 fishing_state = None  # None, "casting", or "fishing"
@@ -245,6 +246,7 @@ max_fish_tiles = 3  # Maximum fish tiles at a time
 fish_despawn_time = 60000  # 1 minute in milliseconds
 bobber_speed = 0.1  # Speed of bobber movement (tiles per frame)
 bite_interval = random.uniform(2000, 5000)  # Random interval for fish bites (2–5 seconds)
+bite_wait_multiplier = 1.0  # Multiplier for time until a fish bites
 bite_duration = 1000  # Duration of a fish bite (1 second)
 boat_entity = None  # {"steering_pos": (x, y), "tiles": [(x, y), ...], "state": "idle"/"steering"/"moving", "direction": (dx, dy)}
 steering_interaction = False  # True when interacting with steering wheel
@@ -1144,7 +1146,7 @@ def dialogue_box_render(screen, state):
 
 def dialogue_box_update(state, event):
     """Update dialogue box based on input events."""
-    global has_fishing_rod, fish_caught, wood_texts  # Declare at function start
+    global has_fishing_rod, has_fishing_rod_upgrade, bite_wait_multiplier, fish_caught, wood_texts  # Declare at function start
     if not state or not state["rect"]:
         return False
     dialogue_manager = state["dialogue_manager"]
@@ -1159,6 +1161,8 @@ def dialogue_box_update(state, event):
                 if dialogue_manager.game_state:
                     game_state = dialogue_manager.game_state
                     has_fishing_rod = game_state["has_fishing_rod"]
+                    has_fishing_rod_upgrade = game_state.get("has_fishing_rod_upgrade", has_fishing_rod_upgrade)
+                    bite_wait_multiplier = 0.5 if has_fishing_rod_upgrade else 1.0
                     fish_caught = game_state["fish_caught"]
                     wood_texts.extend(game_state["wood_texts"])
                     print("Applied game_state after choice: "
@@ -1176,6 +1180,8 @@ def dialogue_box_update(state, event):
                 if dialogue_manager.game_state:
                     game_state = dialogue_manager.game_state
                     has_fishing_rod = game_state["has_fishing_rod"]
+                    has_fishing_rod_upgrade = game_state.get("has_fishing_rod_upgrade", has_fishing_rod_upgrade)
+                    bite_wait_multiplier = 0.5 if has_fishing_rod_upgrade else 1.0
                     fish_caught = game_state["fish_caught"]
                     wood_texts.extend(game_state["wood_texts"])
                     print("Applied game_state after advance: "
@@ -1199,6 +1205,8 @@ def dialogue_box_update(state, event):
                 if dialogue_manager.game_state:
                     game_state = dialogue_manager.game_state
                     has_fishing_rod = game_state["has_fishing_rod"]
+                    has_fishing_rod_upgrade = game_state.get("has_fishing_rod_upgrade", has_fishing_rod_upgrade)
+                    bite_wait_multiplier = 0.5 if has_fishing_rod_upgrade else 1.0
                     fish_caught = game_state["fish_caught"]
                     wood_texts.extend(game_state["wood_texts"])
                     print("Applied game_state after choice: "
@@ -1916,7 +1924,7 @@ def update_fishing():
             bobber["x"] = bobber["target_x"]
             bobber["y"] = bobber["target_y"]
             bobber["state"] = "waiting"
-            bobber["bite_timer"] = now + random.uniform(2000, 5000)  # Next bite in 2–5s
+            bobber["bite_timer"] = now + random.uniform(2000, 5000) * bite_wait_multiplier  # Next bite in 2–5s
             bobber["last_switch"] = now
             fishing_state = "fishing"  # Transition to fishing state
         else:
@@ -1926,14 +1934,14 @@ def update_fishing():
         if now >= bobber["bite_timer"]:
             bobber["state"] = "biting"
             bobber["bite_timer"] = now + bite_duration
-            bobber["last_switchtsam"] = now
+            bobber["last_switch"] = now
     elif bobber["state"] == "biting":
         # Switch between bobber2.png and bobber3.png every 500ms
         if now - bobber["last_switch"] >= 500:
             bobber["last_switch"] += 500  # Increment by 500ms instead of resetting to now
         if now >= bobber["bite_timer"]:
             bobber["state"] = "waiting"
-            bobber["bite_timer"] = now + random.uniform(2000, 5000)
+            bobber["bite_timer"] = now + random.uniform(2000, 5000) * bite_wait_multiplier
             bobber["last_switch"] = now
     
     # Check if fish tile despawned
@@ -2048,7 +2056,7 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests, carried_hat, player_hat, hat_tiles, xp_texts
+    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, has_fishing_rod_upgrade, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests, carried_hat, player_hat, hat_tiles, xp_texts, bite_wait_multiplier
     if in_dialogue:
         return
     if not selected_tile:
@@ -2092,6 +2100,7 @@ def interact(button):
     if button in (1, 3):
         game_state = {
             "has_fishing_rod": has_fishing_rod,
+            "has_fishing_rod_upgrade": has_fishing_rod_upgrade,
             "fish_caught": fish_caught,
             "world": world,
             "wood_texts": [],
@@ -2102,6 +2111,8 @@ def interact(button):
         }
         result = npc_manager.interact(x, y, game_state, world)
         has_fishing_rod = result["has_fishing_rod"]
+        has_fishing_rod_upgrade = result.get("has_fishing_rod_upgrade", has_fishing_rod_upgrade)
+        bite_wait_multiplier = 0.5 if has_fishing_rod_upgrade else 1.0
         fish_caught = result["fish_caught"]
         pirates_killed = result["pirates_killed"]
         has_pirate_bane_amulet = result.get("has_pirate_bane_amulet", has_pirate_bane_amulet)
@@ -2865,6 +2876,7 @@ while running:
     game_state = {
         "world": world,
         "has_fishing_rod": has_fishing_rod,
+        "has_fishing_rod_upgrade": has_fishing_rod_upgrade,
         "fish_caught": fish_caught,
         "wood_texts": [],
         "pirates_killed": pirates_killed,

@@ -59,6 +59,13 @@ class DialogueManager:
         self.start_time = pygame.time.get_ticks()
         if self.npc:
             self.npc.interaction_cooldown = pygame.time.get_ticks() + 999999
+        # Execute action on the first node immediately
+        node = self.current_tree.get_node(self.current_node_id)
+        if node and node.action:
+            try:
+                node.action(self.game_state)
+            except Exception as e:
+                print(f"Error in start node action: {e}")
         print(f"Started dialogue with {npc.type} at node {self.current_node_id}")
         return True
 
@@ -80,13 +87,7 @@ class DialogueManager:
             self.end_dialogue()
             return
 
-        if current_node.action:
-            try:
-                print(f"Executing node action for node {self.current_node_id}")
-                current_node.action(self.game_state)
-            except Exception as e:
-                print(f"Error in node action: {e}")
-
+        # Process choice selection before moving to next node
         if choice_index is not None and current_node.choices:
             if choice_index < len(current_node.choices):
                 choice_text, next_node_id, choice_action = current_node.choices[choice_index]
@@ -106,13 +107,18 @@ class DialogueManager:
         elif not current_node.choices:
             self.current_node_id += 1
             print(f"No choices, advancing to node {self.current_node_id}")
-
         next_node = self.current_tree.evaluate_node(self.current_node_id, self.game_state)
         if not next_node:
             print(f"Next node (id={self.current_node_id}) invalid, ending dialogue")
             self.end_dialogue()
         else:
             print(f"Advanced to node {self.current_node_id}: '{next_node.text}'")
+            if next_node.action:
+                try:
+                    print(f"Executing node action for node {self.current_node_id}")
+                    next_node.action(self.game_state)
+                except Exception as e:
+                    print(f"Error in node action: {e}")
 
     def check_timeout(self):
         if self.active and pygame.time.get_ticks() - self.start_time > self.timeout:
@@ -149,6 +155,7 @@ class WallerNPC(NPC):
     def get_dialogue_tree(self, game_state):
         nodes = []
         has_fishing_rod = game_state["has_fishing_rod"]
+        has_fishing_rod_upgrade = game_state.get("has_fishing_rod_upgrade", False)
         fish_caught = game_state["fish_caught"]
         xp = self.xp
 
@@ -178,10 +185,12 @@ class WallerNPC(NPC):
         if not has_fishing_rod:
             if xp >= 10:
                 nodes.append(DialogueNode(
-                    text="You've brought enough wood! Take this fishing rod.",
+                    text=(
+                        f"You've brought enough wood! Take this fishing rod. "
+                        f"You've caught {fish_caught} fish so far."
+                    ),
                     action=lambda gs: gs.update({"has_fishing_rod": True})
                 ))
-                self.xp -= 10
             else:
                 nodes.append(DialogueNode(
                     text=f"Bring me wood! {xp}/10 pieces so far."
@@ -196,6 +205,12 @@ class WallerNPC(NPC):
             nodes.append(DialogueNode(
                 text=random.choice(responses)
             ))
+
+            if not has_fishing_rod_upgrade and xp >= 100:
+                nodes.append(DialogueNode(
+                    text="You've proven your dedication! I'll upgrade your rod.",
+                    action=lambda gs: gs.update({"has_fishing_rod_upgrade": True})
+                ))
 
         return DialogueTree(nodes)
 
