@@ -322,20 +322,21 @@ def draw_grid():
     brightness = [[0.0 for _ in range(VIEW_WIDTH)] for _ in range(VIEW_HEIGHT)]
     light_source_tiles = set()
 
-    # Collect light sources
+    # Collect light sources (walls and torches only)
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
-            if world.get_tile(gx, gy) in [Tile.TURRET, Tile.WALL, Tile.TORCH]:
+            if world.get_tile(gx, gy) in [Tile.TORCH]:
                 light_source_tiles.add((gx, gy))
 
     player_tile = (int(player_pos[0] + 0.5), int(player_pos[1] + 0.5))
     light_source_tiles.add(player_tile)
 
-    for dx in range(-3, 4):
-        for dy in range(-3, 4):
+    player_radius = 3 if building_mode == "torch" else 2
+    for dx in range(-player_radius, player_radius + 1):
+        for dy in range(-player_radius, player_radius + 1):
             dist = abs(dx) + abs(dy)
-            if dist <= 3:
+            if dist <= player_radius:
                 nx, ny = player_tile[0] + dx, player_tile[1] + dy
                 local_nx = nx - start_x
                 local_ny = ny - start_y
@@ -362,6 +363,21 @@ def draw_grid():
             local_ny = ny - start_y
             if 0 <= local_nx < VIEW_WIDTH and 0 <= local_ny < VIEW_HEIGHT:
                 brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], 0.33)
+
+    # Projectile lighting (small radius)
+    for proj in projectiles:
+        sx = int(proj["x"] + 0.5)
+        sy = int(proj["y"] + 0.5)
+        local_x = sx - start_x
+        local_y = sy - start_y
+        if 0 <= local_x < VIEW_WIDTH and 0 <= local_y < VIEW_HEIGHT:
+            brightness[local_y][local_x] = max(brightness[local_y][local_x], 0.9)
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nx, ny = sx + dx, sy + dy
+            local_nx = nx - start_x
+            local_ny = ny - start_y
+            if 0 <= local_nx < VIEW_WIDTH and 0 <= local_ny < VIEW_HEIGHT:
+                brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], 0.5)
 
     # First pass: Render base tiles without darkness
     now = pygame.time.get_ticks()
