@@ -81,6 +81,7 @@ class Tile(IntEnum):
     WOOD = 14  # Tile for Wood
     METAL = 15  # Tile for Metal
     HAT = 16  # Pirate hat sitting on land
+    TORCH = 17  # Torch tile that emits light
 
 # --- Movement and Land Tiles ---
 # Tile sets defining valid tiles for movement and boat tile adjacency. Used for pathfinding and placement rules.
@@ -88,13 +89,13 @@ MOVEMENT_TILES = (
     Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.LAND,
     Tile.USED_LAND, Tile.LOOT, Tile.SAPLING, Tile.TURRET,
     Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL,
-    Tile.HAT
+    Tile.HAT, Tile.TORCH
 )  # Tiles that entities can move onto
 LAND_TILES = (
     Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.LAND,
     Tile.USED_LAND, Tile.LOOT, Tile.SAPLING, Tile.TREE,
     Tile.TURRET, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL,
-    Tile.HAT
+    Tile.HAT, Tile.TORCH
 )  # Tiles considered adjacent for boat placement
 
 # --- Sound Files ---
@@ -148,6 +149,7 @@ TILE_IMAGE_FILES = {
     "NPC_PIRATE_HUNTER": "Assets/npc_hunter.png",
     "WOOD": "Assets/wood.png",  # Image for wood tiles
     "METAL": "Assets/metal.png",  # Image for metal tiles
+    "TORCH": "Assets/torch.png",  # Image for torch tiles
 }
 
 # --- Water Animation Frames ---

@@ -91,7 +91,8 @@ tile_images = {
     Tile.STEERING_WHEEL: pygame.image.load(TILE_IMAGE_FILES["STEERING_WHEEL"]).convert_alpha(),
     "ARROW": pygame.image.load(TILE_IMAGE_FILES["ARROW"]).convert_alpha(),
     Tile.WOOD: pygame.image.load(TILE_IMAGE_FILES["WOOD"]).convert_alpha(),
-    Tile.METAL: pygame.image.load(TILE_IMAGE_FILES["METAL"]).convert_alpha()
+    Tile.METAL: pygame.image.load(TILE_IMAGE_FILES["METAL"]).convert_alpha(),
+    Tile.TORCH: pygame.image.load(TILE_IMAGE_FILES["TORCH"]).convert_alpha()
 }
 
 player_image = pygame.image.load(TILE_IMAGE_FILES["PLAYER"]).convert_alpha()
@@ -231,7 +232,7 @@ player_move_delay = 150
 facing = [0, -1]
 interaction_ui_enabled = False
 
-building_mode = None  # None, "wood", or "metal"
+building_mode = None  # None, "wood", "metal", "boulder", "sapling", or "torch"
 carried_item_pos = None  # Stores the position of the picked-up Wood or Metal tile
 carried_hat = None  # Hat data being carried
 player_hat = None   # Hat currently worn
@@ -325,7 +326,7 @@ def draw_grid():
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             gx, gy = start_x + x, start_y + y
-            if world.get_tile(gx, gy) in [Tile.TURRET, Tile.WALL]:
+            if world.get_tile(gx, gy) in [Tile.TURRET, Tile.WALL, Tile.TORCH]:
                 light_source_tiles.add((gx, gy))
 
     player_tile = (int(player_pos[0] + 0.5), int(player_pos[1] + 0.5))
@@ -403,7 +404,7 @@ def draw_grid():
                 py = (y + 1 - (top_left_y - start_y)) * TILE_SIZE
                 under_rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
                 tile = world.get_tile(gx, gy)
-                if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.METAL, Tile.WOOD, Tile.HAT]:
+                if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.METAL, Tile.WOOD, Tile.HAT, Tile.TORCH]:
                     under_land_image = scaled_tile_images.get("UNDER_LAND")
                     if under_land_image:
                         game_surface.blit(under_land_image, under_rect)
@@ -420,7 +421,7 @@ def draw_grid():
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-            if tile in [Tile.TURRET, Tile.TREE, Tile.SAPLING, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL, Tile.HAT]:
+            if tile in [Tile.TURRET, Tile.TREE, Tile.SAPLING, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL, Tile.HAT, Tile.TORCH]:
                 # Render the base tile underneath
                 if tile == Tile.STEERING_WHEEL:
                     # For STEERING_WHEEL, render BOAT_TILE underneath
@@ -577,7 +578,8 @@ def draw_grid():
                 "sapling": Tile.SAPLING,
                 "wood": Tile.WOOD,
                 "metal": Tile.METAL,
-                "boulder": Tile.BOULDER
+                "boulder": Tile.BOULDER,
+                "torch": Tile.TORCH
             }
             target_tile = world.get_tile(sel_x, sel_y)
             # Default preview tile is based on building_mode
@@ -590,12 +592,14 @@ def draw_grid():
                     preview_tile = Tile.BOAT
                 elif target_tile == Tile.BOAT:
                     preview_tile = Tile.STEERING_WHEEL
+                elif target_tile == Tile.WOOD:
+                    preview_tile = Tile.TORCH
             elif building_mode == "metal" and target_tile == Tile.WOOD:
                 preview_tile = Tile.TURRET
             # Render preview if valid placement
             if preview_tile and (
-                (building_mode in ["sapling", "boulder"] and target_tile == Tile.LAND) or
-                (building_mode == "wood" and target_tile in [Tile.LAND, Tile.BOULDER, Tile.BOAT] or 
+                (building_mode in ["sapling", "boulder", "torch"] and target_tile == Tile.LAND) or
+                (building_mode == "wood" and target_tile in [Tile.LAND, Tile.BOULDER, Tile.BOAT, Tile.WOOD] or
                 (target_tile == Tile.WATER and has_adjacent_boat_or_land(sel_x, sel_y))) or
                 (building_mode == "metal" and target_tile in [Tile.LAND, Tile.WOOD])
             ):
@@ -2178,7 +2182,7 @@ def interact(button):
                         tiles_placed += 1
                         building_mode = None
                         carried_item_pos = None
-                        return
+                    return
                 elif tile == Tile.WATER and has_adjacent_boat_or_land(x, y):
                     world.set_tile(x, y, Tile.BOAT)
                     tiles_placed += 1
@@ -2189,6 +2193,11 @@ def interact(button):
                 elif tile == Tile.BOAT:
                     world.set_tile(x, y, Tile.STEERING_WHEEL)
                     tiles_placed += 1
+                    building_mode = None
+                    carried_item_pos = None
+                    return
+                elif tile == Tile.WOOD:
+                    world.set_tile(x, y, Tile.TORCH)
                     building_mode = None
                     carried_item_pos = None
                     return
@@ -2206,6 +2215,12 @@ def interact(button):
                     building_mode = None
                     carried_item_pos = None
                     sound_place_turret.play()
+                    return
+            elif building_mode == "torch":
+                if tile == Tile.LAND:
+                    world.set_tile(x, y, Tile.TORCH)
+                    building_mode = None
+                    carried_item_pos = None
                     return
             elif building_mode == "sapling":
                 if tile == Tile.LAND:
@@ -2379,6 +2394,11 @@ def interact(button):
             world.set_tile(x, y, Tile.USED_LAND)
             wood -= 1
             return
+        if tile == Tile.TORCH and not building_mode:
+            building_mode = "torch"
+            carried_item_pos = (x, y)
+            world.set_tile(x, y, Tile.LAND)
+            return
         # Attack tree
         if tile == Tile.TREE:
             # Find adjacent land tiles
@@ -2471,6 +2491,8 @@ def interact(button):
                 wood += 1
             elif building_mode == "boulder":
                 world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.BOULDER)
+            elif building_mode == "torch":
+                world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.TORCH)
             building_mode = None
             carried_item_pos = None
             return
@@ -2546,6 +2568,8 @@ def update_interaction_ui():
                 interaction_ui["left_message"] = "Place Wood\nBuild Boat Tile\n(Left Click)"
             elif tile == Tile.BOAT:
                 interaction_ui["left_message"] = "Place Wood\nBuild Steering Wheel\n(Left Click)"
+            elif tile == Tile.WOOD:
+                interaction_ui["left_message"] = "Place Wood\nBuild Torch\n(Left Click)"
         elif building_mode == "metal":
             if tile == Tile.LAND:
                 interaction_ui["left_message"] = "Place Metal\n(Left Click)"
@@ -2554,6 +2578,9 @@ def update_interaction_ui():
         elif building_mode == "boulder":
             if tile == Tile.LAND:
                 interaction_ui["left_message"] = "Place Boulder\n(Left Click)"
+        elif building_mode == "torch":
+            if tile == Tile.LAND:
+                interaction_ui["left_message"] = "Place Torch\n(Left Click)"
         if interaction_ui["left_message"]:
             interaction_ui["alpha"] = 255
         return
@@ -2597,6 +2624,8 @@ def update_interaction_ui():
         interaction_ui["right_message"] = "Attack\n(Right Click)"
     elif tile == Tile.TURRET:
         interaction_ui["right_message"] = "Attack\n(Right Click)"
+    elif tile == Tile.TORCH:
+        interaction_ui["right_message"] = "Move Torch\n(Right Click)"
 
     player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
     manhattan_dist = abs(x - player_tile_x) + abs(y - player_tile_y)
