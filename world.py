@@ -169,6 +169,8 @@ class World:
         self.rocky_generator = RockyIslandGenerator()
         self.forested_generator = ForestedIslandGenerator()
         self.starting_generator = DefaultIslandGenerator()
+        # Track how many special resource tiles have been placed
+        self.tile_counts = {Tile.WOOD: 0, Tile.METAL: 0}
 
     def _select_generator(self, cx, cy):
         value = (cx + cy) % 3
@@ -253,8 +255,11 @@ class World:
         if (cx, cy) not in self.chunks:
             loaded_data = self.load_chunk(cx, cy)
             self.chunks[(cx, cy)] = loaded_data if loaded_data is not None else self.generate_chunk(cx, cy)
+        old_tile = self.chunks[(cx, cy)][ty][tx]
         self.chunks[(cx, cy)][ty][tx] = tile_type
         self.tile_cache[(x, y)] = tile_type
+        if tile_type in self.tile_counts and old_tile != tile_type:
+            self.tile_counts[tile_type] += 1
         self.dirty_chunks.add((cx, cy))
 
     def save_dirty_chunks(self):
