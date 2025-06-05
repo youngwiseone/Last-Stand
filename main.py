@@ -1144,7 +1144,7 @@ def dialogue_box_render(screen, state):
 
 def dialogue_box_update(state, event):
     """Update dialogue box based on input events."""
-    global wood, has_fishing_rod, fish_caught, wood_texts  # Declare at function start
+    global has_fishing_rod, fish_caught, wood_texts  # Declare at function start
     if not state or not state["rect"]:
         return False
     dialogue_manager = state["dialogue_manager"]
@@ -1158,12 +1158,11 @@ def dialogue_box_update(state, event):
                 # Sync game_state after choice
                 if dialogue_manager.game_state:
                     game_state = dialogue_manager.game_state
-                    wood = game_state["wood"]
                     has_fishing_rod = game_state["has_fishing_rod"]
                     fish_caught = game_state["fish_caught"]
                     wood_texts.extend(game_state["wood_texts"])
                     print("Applied game_state after choice: "
-                          f"wood={wood}, has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
+                          f"has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
                           f"wood_texts={wood_texts}")
                 else:
                     print("Warning: dialogue_manager.game_state is None after choice")
@@ -1176,12 +1175,11 @@ def dialogue_box_update(state, event):
                 # Sync game_state after advance
                 if dialogue_manager.game_state:
                     game_state = dialogue_manager.game_state
-                    wood = game_state["wood"]
                     has_fishing_rod = game_state["has_fishing_rod"]
                     fish_caught = game_state["fish_caught"]
                     wood_texts.extend(game_state["wood_texts"])
                     print("Applied game_state after advance: "
-                          f"wood={wood}, has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
+                          f"has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
                           f"wood_texts={wood_texts}")
                 else:
                     print("Warning: dialogue_manager.game_state is None after advance")
@@ -1200,12 +1198,11 @@ def dialogue_box_update(state, event):
                 # Sync game_state after choice
                 if dialogue_manager.game_state:
                     game_state = dialogue_manager.game_state
-                    wood = game_state["wood"]
                     has_fishing_rod = game_state["has_fishing_rod"]
                     fish_caught = game_state["fish_caught"]
                     wood_texts.extend(game_state["wood_texts"])
                     print("Applied game_state after choice: "
-                          f"wood={wood}, has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
+                          f"has_fishing_rod={has_fishing_rod}, fish_caught={fish_caught}, "
                           f"wood_texts={wood_texts}")
                 else:
                     print("Warning: dialogue_manager.game_state is None after choice")
@@ -2051,7 +2048,7 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests, carried_hat, player_hat, hat_tiles
+    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests, carried_hat, player_hat, hat_tiles, xp_texts
     if in_dialogue:
         return
     if not selected_tile:
@@ -2063,17 +2060,45 @@ def interact(button):
         return
     tile = world.get_tile(x, y)
 
+    npc = npc_manager.get_npc_at(x, y)
+
+    # Give carried resources to NPC instead of placing them
+    if button == 1 and npc:
+        if building_mode in ("wood", "metal"):
+            if npc.type == "waller" and building_mode == "wood":
+                npc.xp += 1
+                xp_texts.append({"x": npc.x, "y": npc.y, "text": "+1 XP", "timer": 1000, "alpha": 255})
+                building_mode = None
+                carried_item_pos = None
+                return
+            elif npc.type == "trader":
+                gain = 5 if building_mode == "metal" else 1
+                npc.xp += gain
+                xp_texts.append({"x": npc.x, "y": npc.y, "text": f"+{gain} XP", "timer": 1000, "alpha": 255})
+                building_mode = None
+                carried_item_pos = None
+                return
+        if carried_hat and npc.type == "pirate_hunter":
+            gain = carried_hat.get("level", 1)
+            if carried_hat.get("rare_type"):
+                gain *= 2
+            npc.xp += gain
+            npc.hat_count += 1
+            carried_hat = None
+            xp_texts.append({"x": npc.x, "y": npc.y, "text": f"+{gain} XP", "timer": 1000, "alpha": 255})
+            return
+
     # Handle NPC interactions
     if button in (1, 3):
         game_state = {
-            "wood": 300,  # Static dummy value
             "has_fishing_rod": has_fishing_rod,
             "fish_caught": fish_caught,
             "world": world,
             "wood_texts": [],
             "pirates_killed": pirates_killed,
             "has_pirate_bane_amulet": has_pirate_bane_amulet,
-            "quests": quests
+            "quests": quests,
+            "player_hat": player_hat
         }
         result = npc_manager.interact(x, y, game_state, world)
         has_fishing_rod = result["has_fishing_rod"]
@@ -2835,18 +2860,17 @@ while running:
         spawn_fish_tiles()
         fish_spawn_timer = 0    
 
-    npc_manager.update(dt, world, player_pos)
+    npc_manager.update(dt, world, player_pos, hat_tiles, xp_texts)
     # NPC spawning:
     game_state = {
-        "wood": wood,
+        "world": world,
         "has_fishing_rod": has_fishing_rod,
         "fish_caught": fish_caught,
-        "world": world,
         "wood_texts": [],
         "pirates_killed": pirates_killed,
         "has_pirate_bane_amulet": has_pirate_bane_amulet,
-        "pirates_killed": pirates_killed,
-        "quests": quests
+        "quests": quests,
+        "player_hat": player_hat
     }
     npc_manager.spawn_npcs(game_state, player_pos, VIEW_WIDTH, VIEW_HEIGHT)
 
