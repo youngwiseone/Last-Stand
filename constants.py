@@ -9,9 +9,11 @@ from enum import IntEnum
 CHUNK_DIR = "chunks"  # Directory for storing chunk data files
 
 # --- Chunk generation settings ---
-LAND_FRACTION = 0.05  # 5% of chunk tiles are land
-MIN_LAND_MASS_SIZE = 8
-MAX_LAND_MASS_SIZE = 20
+# Less overall land to give more water between islands
+LAND_FRACTION = 0.1  # 10% of chunk tiles are land
+# Larger island masses for more interesting terrain
+MIN_LAND_MASS_SIZE = 16
+MAX_LAND_MASS_SIZE = 40
 TREE_CHANCE = 0.2
 LOOT_CHANCE = 0.05
 BOULDER_CHANCE = 0.03

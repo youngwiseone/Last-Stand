@@ -75,7 +75,8 @@ class RockyIslandGenerator(ChunkGenerator):
     def generate(self, cx, cy):
         chunk = [[Tile.WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
         total_tiles = CHUNK_SIZE * CHUNK_SIZE
-        target_land_tiles = int(total_tiles * 0.10)
+        # Slightly less overall land to create more water between large islands
+        target_land_tiles = int(total_tiles * 0.08)
         land_tiles = []
         land_tiles_placed = 0
 
@@ -84,7 +85,8 @@ class RockyIslandGenerator(ChunkGenerator):
             if not available_positions:
                 break
             start_x, start_y = random.choice(available_positions)
-            mass_size = min(random.randint(10, 25), target_land_tiles - land_tiles_placed)
+            # Generate much larger island masses
+            mass_size = min(random.randint(20, 50), target_land_tiles - land_tiles_placed)
             if mass_size <= 0:
                 break
 
@@ -119,7 +121,8 @@ class ForestedIslandGenerator(ChunkGenerator):
     def generate(self, cx, cy):
         chunk = [[Tile.WATER for _ in range(CHUNK_SIZE)] for _ in range(CHUNK_SIZE)]
         total_tiles = CHUNK_SIZE * CHUNK_SIZE
-        target_land_tiles = int(total_tiles * 0.08)  # 8% land
+        # Less overall land for more water between bigger islands
+        target_land_tiles = int(total_tiles * 0.07)  # 7% land
         land_tiles = []
         land_tiles_placed = 0
 
@@ -128,7 +131,8 @@ class ForestedIslandGenerator(ChunkGenerator):
             if not available_positions:
                 break
             start_x, start_y = random.choice(available_positions)
-            mass_size = min(random.randint(12, 30), target_land_tiles - land_tiles_placed)
+            # Double the size of islands for dense forests
+            mass_size = min(random.randint(24, 60), target_land_tiles - land_tiles_placed)
             if mass_size <= 0:
                 break
 
