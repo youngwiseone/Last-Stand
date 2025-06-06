@@ -2341,16 +2341,32 @@ def interact(button):
             fish_data = next((f for f in fish_tiles if f["x"] == x and f["y"] == y), None)
             if fish_data:
                 if fishing_state == "fishing" and bobber and bobber["state"] == "biting" and bobber["target_x"] == x + 0.5 and bobber["target_y"] == y + 0.5:
-                    building_mode = random.choice(["wood", "metal"])
-                    carried_item_pos = (x, y)
+                    # 20% chance to catch a hat, otherwise wood or metal
+                    if random.random() < 0.2:
+                        carried_hat = {
+                            "level": random.randint(1, 10)
+                        }
+                        if random.random() < 0.1:
+                            carried_hat["rare_type"] = random.choice(RARE_PIRATE_TYPES)
+                        carried_item_pos = None
+                        wood_texts.append({
+                            "x": x,
+                            "y": y,
+                            "text": "+Hat",
+                            "timer": 1000,
+                            "alpha": 255
+                        })
+                    else:
+                        building_mode = random.choice(["wood", "metal"])
+                        carried_item_pos = (x, y)
+                        wood_texts.append({
+                            "x": x,
+                            "y": y,
+                            "text": f"+{building_mode.capitalize()}",
+                            "timer": 1000,
+                            "alpha": 255
+                        })
                     fish_caught += 1
-                    wood_texts.append({
-                        "x": x,
-                        "y": y,
-                        "text": f"+{building_mode.capitalize()}",
-                        "timer": 1000,
-                        "alpha": 255
-                    })
                     fishing_state = None
                     bobber = None
                     return
@@ -2381,10 +2397,11 @@ def interact(button):
             return
         # Collect loot
         if tile == Tile.LOOT:
-            building_mode = random.choice(["wood", "metal"])
+            # Loot chests can now yield boulders in addition to wood or metal
+            building_mode = random.choice(["wood", "metal", "boulder"])
             carried_item_pos = (x, y)
             world.set_tile(x, y, Tile.LAND)
-            return        
+            return
 
     elif button == 3:  # Right-click: Attack environment
         if tile == Tile.LAND:
@@ -2445,10 +2462,8 @@ def interact(button):
             return
         # Attack boulder
         if tile == Tile.BOULDER and not building_mode:
-            if random.random() < 0.33:
-                world.set_tile(x, y, Tile.METAL)
-            else:
-                world.set_tile(x, y, Tile.LAND)
+            # Boulders now always yield metal when destroyed
+            world.set_tile(x, y, Tile.METAL)
             return
         # Attack or weaken wall
         if tile == Tile.WALL:
@@ -2618,7 +2633,7 @@ def update_interaction_ui():
     elif tile in (Tile.TREE, Tile.SAPLING):
         interaction_ui["right_message"] = "Attack\n50% chance for Wood/Sapling\n(Right Click)"
     elif tile == Tile.BOULDER:
-        interaction_ui["right_message"] = "Attack\n33% chance for Metal\n(Right Click)"
+        interaction_ui["right_message"] = "Attack\nGuaranteed Metal\n(Right Click)"
     elif tile == Tile.WALL:
         interaction_ui["right_message"] = "Attack\n(Right Click)"
     elif tile == Tile.TURRET:
