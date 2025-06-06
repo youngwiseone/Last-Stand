@@ -51,6 +51,7 @@ A survival mini-game built with Python and Pygame. Start on an island, expand yo
   - Land: Place turret (3 wood).
   - Turret: Refund 3 wood.
   - Boulder: Convert to wall (5 wood, level 1).
+  - Used Land: Dig up boulder (tile becomes water).
   - Wall: Upgrade (5 wood).
   - Boulder/Wall/Fishing Mode: Cancel.
 - **SPACE**: Restart (game-over screen).

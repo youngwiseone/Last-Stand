@@ -2410,6 +2410,11 @@ def interact(button):
             world.set_tile(x, y, Tile.USED_LAND)
             wood -= 1
             return
+        if tile == Tile.USED_LAND:
+            building_mode = "boulder"
+            carried_item_pos = (x, y)
+            world.set_tile(x, y, Tile.WATER)
+            return
         if tile == Tile.TORCH and not building_mode:
             building_mode = "torch"
             carried_item_pos = (x, y)
@@ -2504,7 +2509,11 @@ def interact(button):
                 world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.LAND)
                 wood += 1
             elif building_mode == "boulder":
-                world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.BOULDER)
+                current_tile = world.get_tile(carried_item_pos[0], carried_item_pos[1])
+                if current_tile == Tile.WATER:
+                    world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.USED_LAND)
+                else:
+                    world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.BOULDER)
             elif building_mode == "torch":
                 world.set_tile(carried_item_pos[0], carried_item_pos[1], Tile.TORCH)
             building_mode = None
@@ -2634,6 +2643,8 @@ def update_interaction_ui():
         interaction_ui["right_message"] = "Attack\n50% chance for Wood/Sapling\n(Right Click)"
     elif tile == Tile.BOULDER:
         interaction_ui["right_message"] = "Attack\nGuaranteed Metal\n(Right Click)"
+    elif tile == Tile.USED_LAND:
+        interaction_ui["right_message"] = "Dig Up\nGet Boulder\n(Right Click)"
     elif tile == Tile.WALL:
         interaction_ui["right_message"] = "Attack\n(Right Click)"
     elif tile == Tile.TURRET:
