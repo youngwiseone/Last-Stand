@@ -209,6 +209,7 @@ TURRET_MAX_LEVEL = 99  # Maximum level for turret upgrades
 PLAYER_MAX_LEVEL = 99  # Maximum level for player progression
 PROJECTILE_SPEED = 0.2  # Base speed of turret projectiles in tiles per frame
 PLAYER_MOVE_DELAY = 150  # Delay between player movement inputs (milliseconds)
+PLAYER_ATTACK_COOLDOWN = 250  # Delay between player attacks (milliseconds)
 MAX_FISH_TILES = 3  # Maximum number of fish tiles active at once
 
 # --- UI Settings ---

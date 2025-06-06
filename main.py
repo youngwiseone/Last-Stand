@@ -252,6 +252,8 @@ bite_duration = 1000  # Duration of a fish bite (1 second)
 boat_entity = None  # {"steering_pos": (x, y), "tiles": [(x, y), ...], "state": "idle"/"steering"/"moving", "direction": (dx, dy)}
 steering_interaction = False  # True when interacting with steering wheel
 in_boat_mode = False
+attack_mode = False  # True when player is in attack mode
+player_attack_timer = 0  # Tracks last time player fired a projectile
 
 has_pirate_bane_amulet = False  # Tracks if player has the Pirate Bane Amulet
 quests = {}
@@ -1806,17 +1808,17 @@ def update_sparks():
         spark["y"] += spark["vel"][1]
 
 def update_projectiles():
-    global pirates_killed, wood
+    global pirates_killed, wood, player_xp, player_level, player_xp_texts, quests
     base_projectile_speed = 0.2
     scaled_projectile_speed = base_projectile_speed * get_speed_multiplier()
     pirates_to_remove = set()
-    max_distance = TURRET_RANGE
 
     for proj in projectiles[:]:
         next_x = proj["x"] + proj["dir"][0] * scaled_projectile_speed
         next_y = proj["y"] + proj["dir"][1] * scaled_projectile_speed
         tile_x, tile_y = int(next_x), int(next_y)
 
+        max_distance = 2 * TURRET_RANGE if proj.get("player") else TURRET_RANGE
         distance_traveled = math.hypot(next_x - proj["start_x"], next_y - proj["start_y"])
         if distance_traveled > max_distance:
             projectiles.remove(proj)
@@ -1919,6 +1921,29 @@ def update_projectiles():
                             if level < TURRET_MAX_LEVEL and turret_xp[turret_id] >= xp_needed:
                                 turret_levels[turret_id] += 1
                                 turret_xp[turret_id] -= xp_needed
+                        if proj.get("player"):
+                            xp_gained = pirate["xp_value"]
+                            player_xp += xp_gained
+                            player_xp_texts.append({
+                                "x": player_pos[0],
+                                "y": player_pos[1],
+                                "text": f"+{xp_gained} XP",
+                                "timer": 1000,
+                                "alpha": 255
+                            })
+                            while player_level < player_max_level and player_xp >= math.pow(2, player_level - 1):
+                                player_xp -= math.pow(2, player_level - 1)
+                                player_level += 1
+                                player_xp_texts.append({
+                                    "x": player_pos[0],
+                                    "y": player_pos[1],
+                                    "text": f"Level Up! Level {player_level}",
+                                    "timer": 1000,
+                                    "alpha": 255
+                                })
+                            if "pirate_hunter_quest_count" in quests:
+                                quests["pirate_hunter_quest_count"] += 1
+                                print(f"Pirate killed, quest progress: {quests['pirate_hunter_quest_count']}/{5 + (quests.get('pirate_hunter_quest_completed', 0) * 2)}")
                     hit = True
                     break
                 if hit:
@@ -2094,10 +2119,32 @@ def has_adjacent_boat_or_land(x, y):
     return False
 
 def interact(button):
-    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, has_fishing_rod_upgrade, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests, carried_hat, player_hat, hat_tiles, xp_texts, bite_wait_multiplier
+    global wood, tiles_placed, turrets_placed, building_mode, carried_item_pos, fishing_state, bobber, has_fishing_rod, has_fishing_rod_upgrade, fish_caught, player_xp, player_level, player_pos, player_xp_texts, pirates_killed, boat_entity, steering_interaction, in_boat_mode, has_pirate_bane_amulet, quests, carried_hat, player_hat, hat_tiles, xp_texts, bite_wait_multiplier, player_attack_timer
     if in_dialogue:
         return
     if not selected_tile:
+        return
+    if attack_mode:
+        if button == 1:
+            now = pygame.time.get_ticks()
+            if now - player_attack_timer >= PLAYER_ATTACK_COOLDOWN:
+                px, py = player_pos[0] + 0.5, player_pos[1] + 0.5
+                tx, ty = selected_tile[0] + 0.5, selected_tile[1] + 0.5
+                dx, dy = tx - px, ty - py
+                length = math.hypot(dx, dy) or 1
+                damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))
+                if player_hat and player_hat.get("rare_type") == "turret_breaker":
+                    damage = int(damage * 1.5)
+                projectiles.append({
+                    "x": px,
+                    "y": py,
+                    "start_x": px,
+                    "start_y": py,
+                    "dir": (dx/length, dy/length),
+                    "player": True,
+                    "damage": damage
+                })
+                player_attack_timer = now
         return
     x, y = selected_tile
     player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
@@ -2339,71 +2386,7 @@ def interact(button):
             world.set_tile(x, y, Tile.LAND)
             return        
 
-    elif button == 3:  # Right-click: Attack
-        damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))
-        if player_hat and player_hat.get("rare_type") == "turret_breaker":
-            damage = int(damage * 1.5)
-        # Attack pirates
-        for p in pirates:
-            for pirate in p["pirates"][:]:
-                dist = math.hypot(pirate["x"] - x, pirate["y"] - y)
-                if dist < 0.5:
-                    pre_hit_health = pirate["health"]
-                    pirate["health"] -= damage
-                    if pre_hit_health > 1 and pirate["health"] == 1 and not pirate.get("has_dropped_hat", False):
-                        hat_particles.append({
-                            "x": pirate["x"],
-                            "y": pirate["y"] - 0.5,
-                            "vel_x": random.uniform(-0.05, 0.05),
-                            "vel_y": -0.1,
-                            "rotation": 0,
-                            "rotation_speed": random.uniform(-10, 10),
-                            "timer": 1000,
-                            "initial_timer": 1000,
-                            "level": pirate["level"],
-                            "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None
-                        })
-                        if world.get_tile(int(pirate["x"]), int(pirate["y"])) == Tile.LAND and random.random() < 0.5:
-                            world.set_tile(int(pirate["x"]), int(pirate["y"]), Tile.HAT)
-                            hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
-                        pirate["has_dropped_hat"] = True
-                    if pirate["health"] <= 0:
-                        if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
-                            for key in ["fuse_timer", "fuse_count", "last_count_update"]:
-                                pirate.pop(key, None)
-                        if pirate.get("is_rare", False):
-                            pirate_tile_x, pirate_tile_y = int(pirate["x"]), int(pirate["y"])
-                            tile_type = world.get_tile(pirate_tile_x, pirate_tile_y)
-                            if (tile_type in MOVEMENT_TILES and
-                                tile_type not in (Tile.WATER, Tile.BOAT, Tile.TURRET) and
-                                random.random() < 0.33):
-                                world.set_tile(pirate_tile_x, pirate_tile_y, Tile.LOOT)
-                        xp_gained = pirate["xp_value"]
-                        player_xp += xp_gained
-                        player_xp_texts.append({
-                            "x": player_pos[0],
-                            "y": player_pos[1],
-                            "text": f"+{xp_gained} XP",
-                            "timer": 1000,
-                            "alpha": 255
-                        })
-                        while player_level < player_max_level and player_xp >= math.pow(2, player_level - 1):
-                            player_xp -= math.pow(2, player_level - 1)
-                            player_level += 1
-                            player_xp_texts.append({
-                                "x": player_pos[0],
-                                "y": player_pos[1],
-                                "text": f"Level Up! Level {player_level}",
-                                "timer": 1000,
-                                "alpha": 255
-                            })
-                        p["pirates"].remove(pirate)
-                        pirates_killed += 1
-                        if "pirate_hunter_quest_count" in quests:
-                            quests["pirate_hunter_quest_count"] += 1
-                            print(f"Pirate killed, quest progress: {quests['pirate_hunter_quest_count']}/{5 + (quests.get('pirate_hunter_quest_completed', 0) * 2)}")
-                        explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
-                    return
+    elif button == 3:  # Right-click: Attack environment
         if tile == Tile.LAND:
             building_mode = "sapling"
             carried_item_pos = (x, y)
@@ -2976,6 +2959,8 @@ while running:
                     interaction_ui["alpha"] = 0
                     interaction_ui["offset"] = 20
                     interaction_ui["fade_timer"] = 0
+            elif event.key == pygame.K_g:
+                attack_mode = not attack_mode
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if in_dialogue and dialogue_box_state:
                 if dialogue_box_update(dialogue_box_state, event):
