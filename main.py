@@ -331,19 +331,24 @@ def draw_grid():
             if world.get_tile(gx, gy) in [Tile.TORCH]:
                 light_source_tiles.add((gx, gy))
 
-    player_tile = (int(player_pos[0] + 0.5), int(player_pos[1] + 0.5))
+    player_tile_x = int(player_pos[0])
+    player_tile_y = int(player_pos[1])
+    frac_x = player_pos[0] - player_tile_x
+    frac_y = player_pos[1] - player_tile_y
+    player_tile = (player_tile_x, player_tile_y)
     light_source_tiles.add(player_tile)
 
     player_radius = 3 if building_mode == "torch" else 2
     for dx in range(-player_radius, player_radius + 1):
         for dy in range(-player_radius, player_radius + 1):
-            dist = abs(dx) + abs(dy)
+            dist = abs(dx - frac_x) + abs(dy - frac_y)
             if dist <= player_radius:
-                nx, ny = player_tile[0] + dx, player_tile[1] + dy
+                nx, ny = player_tile_x + dx, player_tile_y + dy
                 local_nx = nx - start_x
                 local_ny = ny - start_y
                 if 0 <= local_nx < VIEW_WIDTH and 0 <= local_ny < VIEW_HEIGHT:
-                    b = 0.9 if dist == 0 else 0.6 if dist == 1 else 0.4 if dist == 2 else 0.2
+                    dist_int = int(round(dist))
+                    b = 0.9 if dist_int == 0 else 0.6 if dist_int == 1 else 0.4 if dist_int == 2 else 0.2
                     brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], b)
 
     npc_manager.render(game_surface, top_left_x, top_left_y, darkness_factor, VIEW_WIDTH, VIEW_HEIGHT)
@@ -2128,7 +2133,8 @@ def interact(button):
         if button == 1:
             now = pygame.time.get_ticks()
             if now - player_attack_timer >= PLAYER_ATTACK_COOLDOWN:
-                px, py = player_pos[0] + 0.5, player_pos[1] + 0.5
+                # Spawn projectile from the center of the screen (top-left of the player's tile)
+                px, py = player_pos[0], player_pos[1]
                 tx, ty = selected_tile[0] + 0.5, selected_tile[1] + 0.5
                 dx, dy = tx - px, ty - py
                 length = math.hypot(dx, dy) or 1
