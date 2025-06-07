@@ -20,6 +20,25 @@ except pygame.error:
     os.environ["SDL_AUDIODRIVER"] = "dummy"
     pygame.mixer.init()
 
+# --- Font and Surface Caching ---
+font_cache = {}
+
+def get_font(size):
+    """Retrieve a cached font of a given size."""
+    if size not in font_cache:
+        font_cache[size] = pygame.font.SysFont(None, size)
+    return font_cache[size]
+
+overlay_surface_cache = {}
+
+def get_overlay_surface(alpha):
+    """Retrieve a cached tile-sized overlay surface."""
+    if alpha not in overlay_surface_cache:
+        surf = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        surf.fill((0, 0, 0, alpha))
+        overlay_surface_cache[alpha] = surf
+    return overlay_surface_cache[alpha]
+
 def adjust_sprite_for_rare(sprite, rare_type):
     """Overlay a color specific to rare_type at 50% opacity, preserving alpha."""
     new_sprite = sprite.copy()
@@ -305,6 +324,8 @@ boulder_placement_mode = False  # Tracks if player is in boulder placement mode
 picked_boulder_pos = None  # Stores the position of the picked-up boulder
 
 game_surface = pygame.Surface((WIDTH, HEIGHT))
+spark_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+darkness_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
 # Start initial music
 current_music = get_music_period(game_time)
@@ -476,13 +497,13 @@ def draw_grid():
                     game_surface.blit(overlay_image, rect)
             if tile == Tile.TURRET:
                 level = turret_levels.get((gx, gy), 1)
-                font = pygame.font.SysFont(None, 20)
+                font = get_font(20)
                 level_text = font.render(str(level), True, WHITE)
                 text_rect = level_text.get_rect(center=(px + TILE_SIZE // 2, py - 10))
                 game_surface.blit(level_text, text_rect)
             if tile == Tile.WALL:
                 level = wall_levels.get((gx, gy), 1)
-                font = pygame.font.SysFont(None, 20)
+                font = get_font(20)
                 level_text = font.render(str(level), True, WHITE)
                 text_rect = level_text.get_rect(center=(px + TILE_SIZE // 2, py - 10))
                 game_surface.blit(level_text, text_rect)
@@ -547,7 +568,7 @@ def draw_grid():
                 pirate_image = scaled_pirate_sprites[sprite_key]
                 game_surface.blit(pirate_image, (px * TILE_SIZE, py * TILE_SIZE))
                 if is_rare and rare_type == "explosive" and "fuse_count" in pirate:
-                    font = pygame.font.SysFont(None, 24)
+                    font = get_font(24)
                     count_text = font.render(str(pirate["fuse_count"]), True, RED)
                     text_rect = count_text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
                     game_surface.blit(count_text, text_rect)
@@ -559,7 +580,7 @@ def draw_grid():
             ):
                 continue
             if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-                font = pygame.font.SysFont(None, 24)
+                font = get_font(24)
                 text = font.render("Land Ahoy!", True, WHITE)
                 text_rect = text.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
                 game_surface.blit(text, text_rect)
@@ -586,9 +607,8 @@ def draw_grid():
         if 0 <= sel_px < VIEW_WIDTH and 0 <= sel_py < VIEW_HEIGHT:
             player_tile_x, player_tile_y = int(player_pos[0]), int(player_pos[1])
             manhattan_dist = abs(sel_x - player_tile_x) + abs(sel_y - player_tile_y)
-            overlay_color = (0, 0, 0, 16) if manhattan_dist > 3 else (0, 0, 0, 128)
-            overlay_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-            overlay_surface.fill(overlay_color)
+            alpha = 16 if manhattan_dist > 3 else 128
+            overlay_surface = get_overlay_surface(alpha)
             game_surface.blit(overlay_surface, (sel_px * TILE_SIZE, sel_py * TILE_SIZE))
 
     if building_mode and selected_tile:
@@ -642,7 +662,7 @@ def draw_grid():
                     image.set_alpha(text["alpha"])
                     game_surface.blit(image, (px * TILE_SIZE, py * TILE_SIZE - 10))
             else:
-                font = pygame.font.SysFont(None, 14)
+                font = get_font(14)
                 text_surface = font.render(text["text"], True, WHITE)
                 text_surface.set_alpha(text["alpha"])
                 text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 10))
@@ -651,7 +671,7 @@ def draw_grid():
         px = text["x"] - top_left_x
         py = text["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            font = pygame.font.SysFont(None, 14)
+            font = get_font(14)
             text_surface = font.render(text["text"], True, YELLOW)
             text_surface.set_alpha(text["alpha"])
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
@@ -662,7 +682,7 @@ def draw_grid():
         px = player_pos[0] - top_left_x
         py = player_pos[1] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            font = pygame.font.SysFont(None, 14)
+            font = get_font(14)
             text_surface = font.render(text["text"], True, YELLOW)
             text_surface.set_alpha(text["alpha"])
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
@@ -697,13 +717,13 @@ def draw_grid():
         py = explosion["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
             alpha = int((explosion["timer"] / 500) * 255)
-            explosion_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-            pygame.draw.circle(explosion_surface, (255, 0, 0, alpha), (TILE_SIZE // 2, TILE_SIZE // 2), TILE_SIZE // 2)
-            game_surface.blit(explosion_surface, (px * TILE_SIZE, py * TILE_SIZE))
+            exp_surface = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+            pygame.draw.circle(exp_surface, (255, 0, 0, alpha), (TILE_SIZE // 2, TILE_SIZE // 2), TILE_SIZE // 2)
+            game_surface.blit(exp_surface, (px * TILE_SIZE, py * TILE_SIZE))
 
     # Render sparks
     if sparks:
-        spark_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        spark_surface.fill((0, 0, 0, 0))
         for spark in sparks:
             px = spark["x"] - top_left_x
             py = spark["y"] - top_left_y
@@ -723,7 +743,7 @@ def draw_grid():
             pygame.draw.circle(game_surface, DARK_GRAY, (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 4)
 
     # Apply darkness overlay using world-coordinate-based positioning
-    darkness_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    darkness_surface.fill((0, 0, 0, 0))
     for y in range(VIEW_HEIGHT):
         for x in range(VIEW_WIDTH):
             # Compute world tile coordinates
@@ -742,7 +762,7 @@ def draw_grid():
     game_surface.blit(darkness_surface, (0, 0))
 
 def draw_ui():
-    font = pygame.font.SysFont(None, 28)
+    font = get_font(28)
     score = turrets_placed + pirates_killed + tiles_placed + days_survived
     wood_text = font.render(f"Wood: {wood}", True, WHITE)
     score_text = font.render(f"Score: {score}", True, WHITE)
@@ -953,8 +973,8 @@ def show_game_over():
     base_surface = pygame.Surface((WIDTH, HEIGHT))
     base_surface.fill(BLACK)
 
-    font = pygame.font.SysFont(None, 48)
-    small_font = pygame.font.SysFont(None, 32)
+    font = get_font(48)
+    small_font = get_font(32)
 
     # Change the game over message based on the cause
     if kraken_game_over:
@@ -1166,7 +1186,7 @@ def dialogue_box_render(screen, state):
     if not state or not state["current_node"]:
         print("Warning: No dialogue box state to render")
         return
-    font = pygame.font.SysFont(None, 28)
+    font = get_font(28)
     padding = 10
     box_height = 150
     state["screen_width"], state["screen_height"] = screen.get_size()
@@ -2032,7 +2052,7 @@ def draw_interaction_ui():
     px = sel_x - top_left_x
     py = sel_y - top_left_y
 
-    font = pygame.font.SysFont(None, 14)
+    font = get_font(14)
     tile_center_x = px * TILE_SIZE + TILE_SIZE // 2
     tile_top_y = py * TILE_SIZE - 10 - interaction_ui["offset"]
 
