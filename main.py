@@ -583,7 +583,11 @@ def draw_grid():
                     else f"level_{level}" if pirate["health"] > 1
                     else "base"
                 )
-                pirate_image = scaled_pirate_sprites[sprite_key]
+                pirate_image = scaled_pirate_sprites[sprite_key].copy()
+                fade = pirate.get("fade_timer", 0)
+                if fade > 0:
+                    alpha = int(255 * (1 - fade / 2000.0))
+                    pirate_image.set_alpha(alpha)
                 game_surface.blit(pirate_image, (px * TILE_SIZE, py * TILE_SIZE))
                 if is_rare and rare_type == "explosive" and "fuse_count" in pirate:
                     font = get_font(24)
@@ -1448,6 +1452,60 @@ def update_fish_tiles():
         if world.get_tile(x, y) == Tile.FISH:  # Ensure it’s still a FISH tile
             world.set_tile(x, y, Tile.WATER)
 
+def compute_brightness_map():
+    """Return brightness levels for tiles currently on screen."""
+    start_x = view_left
+    start_y = view_top
+    brightness = [[0.0 for _ in range(VIEW_WIDTH)] for _ in range(VIEW_HEIGHT)]
+    light_source_tiles = set()
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            gx, gy = start_x + x, start_y + y
+            if world.get_tile(gx, gy) == Tile.TORCH:
+                light_source_tiles.add((gx, gy))
+    player_tile_x = int(player_pos[0])
+    player_tile_y = int(player_pos[1])
+    frac_x = player_pos[0] - player_tile_x
+    frac_y = player_pos[1] - player_tile_y
+    light_source_tiles.add((player_tile_x, player_tile_y))
+    player_radius = 3 if building_mode == "torch" else 2
+    for dx in range(-player_radius, player_radius + 1):
+        for dy in range(-player_radius, player_radius + 1):
+            dist = abs(dx - frac_x) + abs(dy - frac_y)
+            if dist <= player_radius:
+                nx, ny = player_tile_x + dx, player_tile_y + dy
+                local_x = nx - start_x
+                local_y = ny - start_y
+                if 0 <= local_x < VIEW_WIDTH and 0 <= local_y < VIEW_HEIGHT:
+                    dist_int = int(round(dist))
+                    if dist_int == 0:
+                        b = 0.9
+                    elif dist_int == 1:
+                        b = 0.6
+                    elif dist_int == 2:
+                        b = 0.4
+                    else:
+                        b = 0.2
+                    brightness[local_y][local_x] = max(brightness[local_y][local_x], b)
+    for sx, sy in light_source_tiles:
+        local_x = sx - start_x
+        local_y = sy - start_y
+        if 0 <= local_x < VIEW_WIDTH and 0 <= local_y < VIEW_HEIGHT:
+            brightness[local_y][local_x] = max(brightness[local_y][local_x], 0.9)
+        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nx, ny = sx + dx, sy + dy
+            lx = nx - start_x
+            ly = ny - start_y
+            if 0 <= lx < VIEW_WIDTH and 0 <= ly < VIEW_HEIGHT:
+                brightness[ly][lx] = max(brightness[ly][lx], 0.5)
+        for dx, dy in [(-2,0),(2,0),(0,-2),(0,2)]:
+            nx, ny = sx + dx, sy + dy
+            lx = nx - start_x
+            ly = ny - start_y
+            if 0 <= lx < VIEW_WIDTH and 0 <= ly < VIEW_HEIGHT:
+                brightness[ly][lx] = max(brightness[ly][lx], 0.33)
+    return brightness
+
 def spawn_pirate():
     global pirates
     score = turrets_placed + pirates_killed + tiles_placed
@@ -1539,6 +1597,65 @@ def spawn_pirate():
         "ship": [{"x": sx, "y": sy} for sx, sy in ship_tiles],
         "pirates": pirates_data
     })
+
+def spawn_dark_land_pirate():
+    """Spawn a pirate on the closest completely dark tile on screen."""
+    brightness = compute_brightness_map()
+    start_x = view_left
+    start_y = view_top
+    candidates = []
+    for y in range(VIEW_HEIGHT):
+        for x in range(VIEW_WIDTH):
+            if brightness[y][x] > 0:
+                continue
+            gx, gy = start_x + x, start_y + y
+            tile = world.get_tile(gx, gy)
+            if tile not in MOVEMENT_TILES or tile in (
+                Tile.WATER, Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.STEERING_WHEEL
+            ):
+                continue
+            dist_sq = (gx - player_pos[0]) ** 2 + (gy - player_pos[1]) ** 2
+            if dist_sq >= 36:
+                candidates.append((dist_sq, gx, gy))
+    if not candidates:
+        return
+    candidates.sort(key=lambda c: c[0])
+    _, px, py = candidates[0]
+
+    level = 1
+    is_rare = random.random() < 1/3
+    rare_type = random.choice(RARE_PIRATE_TYPES) if is_rare else None
+    max_health = 2 ** level
+    if is_rare and rare_type == "tanky":
+        max_health *= 2
+    move_duration = 300 if not (is_rare and rare_type == "speedy") else 150
+    pirate_data = {
+        "x": float(px),
+        "y": float(py),
+        "start_x": float(px),
+        "start_y": float(py),
+        "target_x": float(px),
+        "target_y": float(py),
+        "move_progress": 1.0,
+        "move_duration": move_duration,
+        "health": max_health,
+        "max_health": max_health,
+        "xp_value": 2 ** (level - 1) * (2 if is_rare else 1),
+        "level": level,
+        "is_rare": is_rare,
+        "rare_type": rare_type,
+        "has_dropped_hat": False,
+        "fade_timer": 2000
+    }
+    pirates.append({
+        "x": px,
+        "y": py,
+        "dir": (0, 0),
+        "state": "walk",
+        "ship": [],
+        "pirates": [pirate_data]
+    })
+    xp_texts.append({"x": px, "y": py, "text": "Aarrgh!", "timer": 2000, "alpha": 255})
 
 def spawn_skeleton(level, immobile=False, near_player=False):
     """Spawn a skeleton using the pirate boat spawn logic.
@@ -1779,6 +1896,9 @@ def update_pirates():
             for pirate in p["pirates"]:
                 if pirate.get("is_skeleton") and not night_mode:
                     continue
+                if pirate.get("fade_timer", 0) > 0:
+                    pirate["fade_timer"] = max(0, pirate["fade_timer"] - dt)
+                    continue
                 if pirate["move_progress"] < 1.0:
                     elapsed = dt
                     pirate["move_progress"] = min(1.0, pirate["move_progress"] + elapsed / pirate["move_duration"])
@@ -1789,6 +1909,9 @@ def update_pirates():
             pirates_to_remove = []
             for pirate in p["pirates"]:
                 if pirate.get("is_skeleton") and not night_mode:
+                    continue
+                if pirate.get("fade_timer", 0) > 0:
+                    pirate["fade_timer"] = max(0, pirate["fade_timer"] - dt)
                     continue
                 is_rare = pirate.get("is_rare", False)
                 rare_type = pirate.get("rare_type", None)
@@ -3259,6 +3382,7 @@ while running:
     t = game_time % 96
     if pirate_spawn_timer >= spawn_delay and ((t > 24 and t < 28) or (t >= 76 and t < 96)):
         spawn_pirate()
+        spawn_dark_land_pirate()
         spawn_kraken()
         pirate_spawn_timer = 0
 
