@@ -196,17 +196,6 @@ def get_speed_multiplier():
     # Apply a minimum multiplier for SCALE = 1 to avoid being too slow
     return max(0.75, base_multiplier) if SCALE == 1 else base_multiplier
 
-def get_music_period(game_time):
-    cycle = 96.0  # Total cycle length
-    t = game_time % cycle
-    if 28 <= t < 52:
-        return "morning"  # 7am–1pm
-    elif 52 <= t < 76:
-        return "afternoon"  # 1pm–7pm
-    elif (76 <= t < 96) or (0 <= t < 4):
-        return "night"  # 7pm–1am
-    else:  # 4 <= t < 28
-        return "late_night"  # 1am–7am
 
 # --- world Setup ---
 world = World()
@@ -225,9 +214,8 @@ npc_manager = NPCManager(scaled_tile_images, npc_sprites)
 in_dialogue = False
 dialogue_box_state = None
 
-current_music = None  # Tracks the current music period ("morning", "afternoon", "night", "late_night")
-music_fade_timer = 0  # Timer for fading out music
-music_fade_duration = 1000  # 1 second fade-out
+current_music = None  # Currently playing music track
+music_index = 0       # Index of the track within the current loop
 
 turrets_placed = 0
 pirates_killed = 0
@@ -320,6 +308,17 @@ wall_levels = {}
 wall_damage_timers = {}  # Track last time each wall was damaged
 WALL_MAX_LEVEL = 99
 
+# --- Night Battle State ---
+night_mode = False          # True when the player has triggered the night fight
+day_paused = True           # Daytime is paused until the first skeleton is attacked
+night_score = 0             # Score accumulated during the night
+combo_points = 0            # Points collected in the current combo chain
+combo_multiplier = 1        # Current combo multiplier
+last_attack_time = 0        # Timestamp of the last successful attack
+pending_skeleton_level = 1  # Level of the next skeleton to spawn
+night_spawn_timer = 0       # Timer for automatic skeleton spawns
+world_play_time = 0         # Total time spent in this world (milliseconds)
+
 boulder_placement_mode = False  # Tracks if player is in boulder placement mode
 picked_boulder_pos = None  # Stores the position of the picked-up boulder
 
@@ -328,9 +327,10 @@ spark_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 darkness_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
 # Start initial music
-current_music = get_music_period(game_time)
+current_music = "morning"
+music_index = 0
 pygame.mixer.music.load(MUSIC_FILES[current_music])
-pygame.mixer.music.play(-1)  # Loop indefinitely
+pygame.mixer.music.play()
 
 # --- Drawing ---
 def draw_grid():
@@ -764,23 +764,28 @@ def draw_grid():
 def draw_ui():
     font = get_font(28)
     score = turrets_placed + pirates_killed + tiles_placed + days_survived
-    wood_text = font.render(f"Wood: {wood}", True, WHITE)
+    if night_mode and combo_multiplier > 1:
+        wood_text = font.render(f"Combo: {combo_multiplier}x", True, WHITE)
+    else:
+        wood_text = font.render(f"Wood: {wood}", True, WHITE)
     score_text = font.render(f"Score: {score}", True, WHITE)
     quit_text = font.render("Press ESC to quit", True, WHITE)
     help_color = WHITE if not interaction_ui_enabled else (150, 150, 150)
     help_text = font.render("Press I for Help", True, help_color)
-    time_str = get_time_string(game_time)  # Add clock
-    time_text = font.render(time_str, True, WHITE)
     day_text = font.render(f"Day: {days_survived + 1}", True, WHITE)  # +1 for 1-based day count
     level_text = font.render(f"Level: {player_level}", True, WHITE)
+    elapsed_sec = world_play_time // 1000
+    time_text = font.render(
+        f"Time: {elapsed_sec//60}:{elapsed_sec%60:02d}", True, WHITE
+    )
 
     screen.blit(wood_text, (10, 10))
     screen.blit(score_text, (10, 40))
     screen.blit(quit_text, (10, 70))
     screen.blit(help_text, (10, 100))
-    screen.blit(time_text, (10, 130))
-    screen.blit(day_text, (10, 160))
-    screen.blit(level_text, (10, 190))
+    screen.blit(day_text, (10, 130))
+    screen.blit(level_text, (10, 160))
+    screen.blit(time_text, (10, 190))
 
 def draw_minimap():
     """Simplified minimap showing nearby chunks, with nighttime visibility limited to view distance."""
@@ -1010,6 +1015,8 @@ def show_game_over():
     offset_x = (screen_w - scaled_width) // 2
     offset_y = (screen_h - scaled_height) // 2
 
+    scaled_surface = pygame.transform.scale(base_surface, (scaled_width, scaled_height))
+
     for alpha in range(255, -1, -10):
         scaled_surface = pygame.transform.scale(base_surface, (scaled_width, scaled_height))
         screen.fill(BLACK)
@@ -1020,6 +1027,75 @@ def show_game_over():
         screen.blit(fade, (0, 0))
         pygame.display.flip()
         pygame.time.delay(20)
+
+def show_night_summary():
+    """Display results after a night battle."""
+    base_surface = pygame.Surface((WIDTH, HEIGHT))
+    base_surface.fill(BLACK)
+    font = get_font(48)
+    small_font = get_font(32)
+
+    minutes = world_play_time // 60000
+    seconds = (world_play_time // 1000) % 60
+    lines = [
+        "Night Ended!",
+        f"Score: {night_score}",
+        f"Time Played: {minutes}m {seconds:02d}s",
+        "",
+        "Press SPACE to continue"
+    ]
+    for i, line in enumerate(lines):
+        text = small_font.render(line, True, WHITE)
+        base_surface.blit(text, (WIDTH // 2 - text.get_width() // 2, 120 + i * 40))
+
+    screen_w, screen_h = screen.get_size()
+    max_scale_w = screen_w / WIDTH
+    max_scale_h = screen_h / HEIGHT
+    scale_factor = min(max_scale_w, max_scale_h)
+
+    scaled_width = int(WIDTH * scale_factor)
+    scaled_height = int(HEIGHT * scale_factor)
+
+    offset_x = (screen_w - scaled_width) // 2
+    offset_y = (screen_h - scaled_height) // 2
+
+    scaled_surface = pygame.transform.scale(base_surface, (scaled_width, scaled_height))
+
+    waiting = True
+    while waiting:
+        screen.fill(BLACK)
+        screen.blit(scaled_surface, (offset_x, offset_y))
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                world.save_dirty_chunks()
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                waiting = False
+        clock.tick(60)
+
+def end_night():
+    """Reset state after the night battle and return to daytime."""
+    global night_mode, day_paused, pirates, krakens, combo_points, combo_multiplier
+    global night_spawn_timer, night_score, pending_skeleton_level, game_time
+
+    night_score += combo_points * combo_multiplier
+    show_night_summary()
+    # Remove all pirates and spawn the initial skeleton again
+    pirates.clear()
+    krakens.clear()
+
+    night_mode = False
+    day_paused = True
+    game_time = 28.0
+    combo_points = 0
+    combo_multiplier = 1
+    night_spawn_timer = 0
+    pending_skeleton_level = 1
+    night_score = 0
+
+    spawn_skeleton(1, immobile=True, near_player=True)
 
 # --- Game Logic ---
 def screen_to_world(mouse_x, mouse_y):
@@ -1416,6 +1492,76 @@ def spawn_pirate():
         "pirates": pirates_data
     })
 
+def spawn_skeleton(level, immobile=False, near_player=False):
+    """Spawn a skeleton using the pirate boat spawn logic.
+
+    When near_player is True, choose the spawn location closest to the player
+    to quickly trigger the night battle.
+    """
+    global pirates
+    cx, cy = world.player_chunk
+    chunk_keys = [
+        (cx + dx, cy + dy)
+        for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
+        for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
+    ]
+    possible_land = []
+    for chunk_key in chunk_keys:
+        if chunk_key not in world.chunks:
+            continue
+        chunk = world.chunks[chunk_key]
+        for ty in range(CHUNK_SIZE):
+            for tx in range(CHUNK_SIZE):
+                if chunk[ty][tx] == Tile.WATER:
+                    wx, wy = world.chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
+                    for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                        lx, ly = wx + dx, wy + dy
+                        if world.get_tile(lx, ly) in LAND_TILES:
+                            possible_land.append((lx, ly))
+    if not possible_land:
+        return
+    if near_player:
+        px, py = player_pos
+        possible_near = [
+            pos for pos in possible_land
+            if (pos[0] - px) ** 2 + (pos[1] - py) ** 2 <= FIRST_SKELETON_RADIUS ** 2
+        ]
+        if possible_near:
+            possible_land = possible_near
+        possible_land.sort(key=lambda pos: (pos[0] - px) ** 2 + (pos[1] - py) ** 2)
+        sx, sy = possible_land[0]
+    else:
+        sx, sy = random.choice(possible_land)
+    max_health = 2 ** level
+    pirate_data = {
+        "x": float(sx),
+        "y": float(sy),
+        "start_x": float(sx),
+        "start_y": float(sy),
+        "target_x": float(sx),
+        "target_y": float(sy),
+        "move_progress": 1.0,
+        "move_duration": 300,
+        "health": max_health,
+        "max_health": max_health,
+        "xp_value": 2 ** (level - 1),
+        "level": level,
+        "is_skeleton": True,
+        "immobile": immobile,
+        "has_dropped_hat": False,
+        "last_move_time": pygame.time.get_ticks(),
+    }
+    pirates.append(
+        {
+            "x": sx,
+            "y": sy,
+            "dir": (0, 0),
+            "state": "walk",
+            "ship": [],
+            "pirates": [pirate_data],
+        }
+    )
+
 def spawn_kraken():
     global krakens
     if len(krakens) >= KRAKEN_LIMIT:
@@ -1454,8 +1600,17 @@ def spawn_kraken():
     })
 
 def update_pirates():
-    global game_over, pirates, pirates_killed, player_hat, hat_particles, hat_tiles, player_invul_timer
+    global pirates, pirates_killed, player_hat, hat_particles, hat_tiles, player_invul_timer
+    global night_score, combo_points, combo_multiplier, night_spawn_timer
     now = pygame.time.get_ticks()
+    if night_mode:
+        night_spawn_timer += dt
+        skeleton_count = sum(
+            1 for g in pirates for pir in g["pirates"] if pir.get("is_skeleton")
+        )
+        if night_spawn_timer >= NIGHT_SPAWN_INTERVAL and skeleton_count < NIGHT_ENEMY_LIMIT:
+            spawn_skeleton(1)
+            night_spawn_timer = 0
     for p in pirates[:]:
         if p["state"] == "boat":
             if not p["ship"]:
@@ -1510,6 +1665,8 @@ def update_pirates():
             if "walk_timer" not in p:
                 p["walk_timer"] = 0
             for pirate in p["pirates"]:
+                if pirate.get("is_skeleton") and not night_mode:
+                    continue
                 if pirate["move_progress"] < 1.0:
                     elapsed = dt
                     pirate["move_progress"] = min(1.0, pirate["move_progress"] + elapsed / pirate["move_duration"])
@@ -1519,6 +1676,8 @@ def update_pirates():
                 continue
             pirates_to_remove = []
             for pirate in p["pirates"]:
+                if pirate.get("is_skeleton") and not night_mode:
+                    continue
                 is_rare = pirate.get("is_rare", False)
                 rare_type = pirate.get("rare_type", None)
                 # Explosive: Update fuse countdown
@@ -1558,7 +1717,7 @@ def update_pirates():
                             player_invul_timer = BASE_HAT_INVUL_TIME
                             player_hat = None
                         else:
-                            game_over = True
+                            end_night()
                             return
                 if pirate["move_progress"] >= 1.0:
                     # Turret Breaker: Target nearest turret
@@ -1638,6 +1797,7 @@ def update_pirates():
                         pirate["target_x"] = tx
                         pirate["target_y"] = ty
                         pirate["move_progress"] = 0.0
+                        pirate["last_move_time"] = now
                         moved = True
                     else:
                         ax, ay = int(pirate["x"] + alt[0]), int(pirate["y"] + alt[1])
@@ -1683,6 +1843,7 @@ def update_pirates():
                             pirate["target_x"] = ax
                             pirate["target_y"] = ay
                             pirate["move_progress"] = 0.0
+                            pirate["last_move_time"] = now
                             moved = True
                     if not moved:
                         for dx_try, dy_try in [primary, alt]:
@@ -1715,10 +1876,20 @@ def update_pirates():
                 avg_x = sum(pirate["x"] for pirate in p["pirates"]) / len(p["pirates"])
                 avg_y = sum(pirate["y"] for pirate in p["pirates"]) / len(p["pirates"])
                 p["x"], p["y"] = avg_x, avg_y
+            if night_mode:
+                for g in pirates[:]:
+                    for pir in g["pirates"][:]:
+                        if pir.get("is_skeleton") and now - pir.get("last_move_time", now) > 60000:
+                            lvl = pir["level"]
+                            g["pirates"].remove(pir)
+                            if not g["pirates"]:
+                                pirates.remove(g)
+                            spawn_skeleton(lvl)
             p["walk_timer"] = now
 
 def update_krakens():
-    global krakens, game_over, pirates_killed, kraken_game_over  # Add kraken_game_over flag
+    global krakens, pirates_killed
+    global night_score, combo_points, combo_multiplier
     now = pygame.time.get_ticks()
     for kraken in krakens[:]:
         if not is_night(game_time):
@@ -1730,9 +1901,8 @@ def update_krakens():
                 # Check if the player is on the tile
                 player_tile_x, player_tile_y = int(player_pos[0] + 0.5), int(player_pos[1] + 0.5)
                 if (tx, ty) == (player_tile_x, player_tile_y):
-                    game_over = True
-                    kraken_game_over = True  # Flag to indicate Kraken caused the game over
-                    return  # Exit early since game is over
+                    end_night()
+                    return
 
                 # Check for pirates on the tile
                 pirates_to_remove = []
@@ -1834,6 +2004,8 @@ def update_sparks():
 
 def update_projectiles():
     global pirates_killed, wood, player_xp, player_level, player_xp_texts, quests
+    global night_score, combo_points, combo_multiplier, last_attack_time, pending_skeleton_level
+    global night_mode, day_paused, game_time
     base_projectile_speed = 0.2
     scaled_projectile_speed = base_projectile_speed * get_speed_multiplier()
     pirates_to_remove = set()
@@ -1875,9 +2047,26 @@ def update_projectiles():
         for p in pirates[:]:
             for pirate in p["pirates"][:]:
                 if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
+                    if pirate.get("is_skeleton") and not night_mode:
+                        night_mode = True
+                        day_paused = False
+                        game_time = 80
+                        last_attack_time = pygame.time.get_ticks()
+                        pending_skeleton_level = pirate["level"]
+                        pirate["immobile"] = False
                     # Store health before damage
                     pre_hit_health = pirate["health"]
                     pirate["health"] -= proj["damage"]
+                    if proj.get("player"):
+                        now_tick = pygame.time.get_ticks()
+                        if now_tick - last_attack_time <= NIGHT_COMBO_WINDOW:
+                            combo_multiplier += 1
+                        else:
+                            night_score += combo_points * combo_multiplier
+                            combo_points = 0
+                            combo_multiplier = 1
+                        combo_points += pirate["level"]
+                        last_attack_time = now_tick
                     # Check if health reaches 1 or if this hit kills the pirate
                     if pre_hit_health > 1 and pirate["health"] == 1:
                         # Health exactly at 1, spawn hat
@@ -1916,6 +2105,10 @@ def update_projectiles():
                             hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
                         pirate["has_dropped_hat"] = True
                     if pirate["health"] <= 0:
+                        if pirate.get("is_skeleton") and night_mode:
+                            new_level = min(SKELETON_MAX_LEVEL, pirate["level"] + 1)
+                            if len(pirates) < NIGHT_ENEMY_LIMIT:
+                                spawn_skeleton(new_level)
                         if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
                             for key in ["fuse_timer", "fuse_count", "last_count_update"]:
                                 pirate.pop(key, None)
@@ -2832,82 +3025,49 @@ def is_night(game_time):
     t = game_time % 96
     return t >= 76 or t < 28  # Night from 76s (7pm) to 28s (7am)
 
-def get_time_string(game_time):
-    cycle = 96.0
-    total_minutes = (game_time % cycle) * 15  # Each second = 15 minutes
-    hour = int(total_minutes // 60) % 24
-    minute = total_minutes % 60
-    display_hour = hour % 12
-    if display_hour == 0:
-        display_hour = 12
-    period = "am" if hour < 12 else "pm"
-    # Map minutes to 15-minute increments
-    if minute < 7.5:
-        minute_str = "00"
-    elif minute < 22.5:
-        minute_str = "15"
-    elif minute < 37.5:
-        minute_str = "30"
-    else:
-        minute_str = "45"
-    return f"{display_hour}:{minute_str}{period}"
     
 def update_music():
-    global current_music, music_fade_timer
-    new_period = get_music_period(game_time)
-    
-    if new_period != current_music:
-        if music_fade_timer == 0:
-            # Start fading out current music
-            if pygame.mixer.music.get_busy():
-                pygame.mixer.music.fadeout(music_fade_duration)
-            music_fade_timer = music_fade_duration
-        else:
-            # Continue fading
-            music_fade_timer -= dt
-            if music_fade_timer <= 0:
-                # Fade complete, switch to new music
-                music_fade_timer = 0
-                current_music = new_period
-                pygame.mixer.music.load(MUSIC_FILES[current_music])
-                pygame.mixer.music.play(-1)  # Loop indefinitely
+    """Loop through day or night tracks based on battle state."""
+    global current_music, music_index
+    if night_mode:
+        tracks = ["night", "late_night"]
+    else:
+        tracks = ["morning", "afternoon"]
+
+    # Start appropriate music if not already playing one of the tracks
+    if current_music not in tracks:
+        music_index = 0
+        current_music = tracks[music_index]
+        pygame.mixer.music.load(MUSIC_FILES[current_music])
+        pygame.mixer.music.play()
+        return
+
+    # Advance to the next track when the current one ends
+    if not pygame.mixer.music.get_busy():
+        music_index = (music_index + 1) % len(tracks)
+        current_music = tracks[music_index]
+        pygame.mixer.music.load(MUSIC_FILES[current_music])
+        pygame.mixer.music.play()
 
 # --- Game Loop ---
 running = True
 while running:
     dt = clock.get_time()  # Compute delta time once per frame
+    world_play_time += dt
     if player_invul_timer > 0:
         player_invul_timer = max(0, player_invul_timer - dt)
-    if game_over:
-        if not fade_done:
-            show_game_over()
-            fade_done = True
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                world.save_dirty_chunks()
-                world.clear_chunk_files()
-                pygame.quit()
-                sys.exit()
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    pygame.mixer.music.stop()
-                    world.save_dirty_chunks()
-                    world.clear_chunk_files()
-                    pygame.quit()
-                    sys.exit()
-                elif event.key == pygame.K_SPACE:
-                    subprocess.Popen([sys.executable, os.path.abspath(__file__)])
-                    world.save_dirty_chunks()
-                    world.clear_chunk_files()
-                    pygame.quit()
-                    sys.exit()
-        continue
 
-    game_time += dt / 1000.0  # Convert milliseconds to seconds
+    if not day_paused and not night_mode:
+        game_time += dt / 1000.0  # Convert milliseconds to seconds
     cycle_length = 96.0  # One day-night cycle in seconds
     if game_time - last_cycle_time >= cycle_length:
         days_survived += 1
         last_cycle_time = game_time - (game_time % cycle_length)  # Align to cycle boundary
+    if day_paused and not night_mode:
+        if not any(any(pr.get("is_skeleton") for pr in p["pirates"]) for p in pirates):
+            spawn_skeleton(pending_skeleton_level, immobile=True, near_player=True)
+
+
     game_surface.fill(BLACK)
     update_music()
     update_sparks()

@@ -215,3 +215,11 @@ MAX_FISH_TILES = 3  # Maximum number of fish tiles active at once
 # --- UI Settings ---
 # Constants for user interface behavior and rendering.
 INTERACTION_FADE_DURATION = 500  # Duration of interaction UI fade-in/out (milliseconds)
+
+# --- Night Battle Settings ---
+# Constants used for the optional night battle mode.
+NIGHT_COMBO_WINDOW = 2000       # Milliseconds allowed between combo attacks
+NIGHT_ENEMY_LIMIT = 30          # Maximum number of skeletons during the night
+SKELETON_MAX_LEVEL = 10         # Highest level a spawned skeleton can reach
+FIRST_SKELETON_RADIUS = 6       # Radius around the player for initial spawn
+NIGHT_SPAWN_INTERVAL = 2000     # Interval between automatic skeleton spawns (ms)
