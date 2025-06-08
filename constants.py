@@ -84,6 +84,7 @@ class Tile(IntEnum):
     METAL = 15  # Tile for Metal
     HAT = 16  # Pirate hat sitting on land
     TORCH = 17  # Torch tile that emits light
+    SKULL_PEDESTAL = 18  # Pedestal used to trigger night cinematic
 
 # --- Movement and Land Tiles ---
 # Tile sets defining valid tiles for movement and boat tile adjacency. Used for pathfinding and placement rules.
@@ -91,13 +92,13 @@ MOVEMENT_TILES = (
     Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.LAND,
     Tile.USED_LAND, Tile.LOOT, Tile.SAPLING, Tile.TURRET,
     Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL,
-    Tile.HAT, Tile.TORCH
+    Tile.HAT, Tile.TORCH, Tile.SKULL_PEDESTAL
 )  # Tiles that entities can move onto
 LAND_TILES = (
     Tile.BOAT, Tile.BOAT_STAGE_2, Tile.BOAT_STAGE_3, Tile.LAND,
     Tile.USED_LAND, Tile.LOOT, Tile.SAPLING, Tile.TREE,
     Tile.TURRET, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL,
-    Tile.HAT, Tile.TORCH
+    Tile.HAT, Tile.TORCH, Tile.SKULL_PEDESTAL
 )  # Tiles considered adjacent for boat placement
 
 # --- Sound Files ---
@@ -105,7 +106,10 @@ LAND_TILES = (
 SOUND_FILES = {
     "place_land": "Assets/sound/place_land.wav",  # Sound for placing boat tiles
     "plant_sapling": "Assets/sound/plant_sapling.wav",  # Sound for planting saplings
-    "place_turret": "Assets/sound/place_turret.wav"  # Sound for placing turrets
+    "place_turret": "Assets/sound/place_turret.wav",  # Sound for placing turrets
+    "whoosh": "Assets/sound/whoosh.wav",       # Pedestal activation
+    "skeleton_laugh": "Assets/sound/skeleton_laugh.wav",  # Laughing skeleton loop
+    "thud": "Assets/sound/thud.wav"            # Night end thud
 }
 
 # --- Music Files ---
@@ -115,6 +119,7 @@ MUSIC_FILES = {
     "afternoon": "Assets/music/Afternoon.wav",  # Music for afternoon (1pm–7pm)
     "night": "Assets/music/Night.wav",  # Music for night (7pm–1am)
     "late_night": "Assets/music/Late_night.wav"  # Music for late night (1am–7am)
+    ,"night_battle": "Assets/music/night_battle.wav"  # High-tempo night battle music
 }
 
 # --- Tile Image Files ---
@@ -152,6 +157,10 @@ TILE_IMAGE_FILES = {
     "WOOD": "Assets/wood.png",  # Image for wood tiles
     "METAL": "Assets/metal.png",  # Image for metal tiles
     "TORCH": "Assets/torch.png",  # Image for torch tiles
+    "SKULL_PEDESTAL": "Assets/skull_pedestal.png",  # Pedestal sprite
+    "SKULL": "Assets/skull.png",  # Skull sprite
+    "SKELETON_LAUGH": "Assets/skeleton_laugh.png",  # Laughing skeleton sprite
+    "PLAYER_DOWNED": "Assets/player_downed.png",  # Player downed pose
 }
 
 # --- Water Animation Frames ---

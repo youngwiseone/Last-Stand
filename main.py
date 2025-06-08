@@ -80,6 +80,9 @@ BASE_HAT_INVUL_TIME = 2000  # Provide 2 seconds of invulnerability when a hat is
 sound_place_land = pygame.mixer.Sound(SOUND_FILES["place_land"])
 sound_plant_sapling = pygame.mixer.Sound(SOUND_FILES["plant_sapling"])
 sound_place_turret = pygame.mixer.Sound(SOUND_FILES["place_turret"])
+sound_whoosh = pygame.mixer.Sound(SOUND_FILES["whoosh"])
+sound_laugh = pygame.mixer.Sound(SOUND_FILES["skeleton_laugh"])
+sound_thud = pygame.mixer.Sound(SOUND_FILES["thud"])
 
 # --- Music ---
 pygame.mixer.music.set_volume(MUSIC_VOLUME)
@@ -111,7 +114,11 @@ tile_images = {
     "ARROW": pygame.image.load(TILE_IMAGE_FILES["ARROW"]).convert_alpha(),
     Tile.WOOD: pygame.image.load(TILE_IMAGE_FILES["WOOD"]).convert_alpha(),
     Tile.METAL: pygame.image.load(TILE_IMAGE_FILES["METAL"]).convert_alpha(),
-    Tile.TORCH: pygame.image.load(TILE_IMAGE_FILES["TORCH"]).convert_alpha()
+    Tile.TORCH: pygame.image.load(TILE_IMAGE_FILES["TORCH"]).convert_alpha(),
+    Tile.SKULL_PEDESTAL: pygame.image.load(TILE_IMAGE_FILES["SKULL_PEDESTAL"]).convert_alpha(),
+    "SKULL": pygame.image.load(TILE_IMAGE_FILES["SKULL"]).convert_alpha(),
+    "SKELETON_LAUGH": pygame.image.load(TILE_IMAGE_FILES["SKELETON_LAUGH"]).convert_alpha(),
+    "PLAYER_DOWNED": pygame.image.load(TILE_IMAGE_FILES["PLAYER_DOWNED"]).convert_alpha()
 }
 
 player_image = pygame.image.load(TILE_IMAGE_FILES["PLAYER"]).convert_alpha()
@@ -310,7 +317,7 @@ WALL_MAX_LEVEL = 99
 
 # --- Night Battle State ---
 night_mode = False          # True when the player has triggered the night fight
-day_paused = True           # Daytime is paused until the first skeleton is attacked
+day_paused = False          # Daytime starts running immediately
 night_score = 0             # Score accumulated during the night
 combo_points = 0            # Points collected in the current combo chain
 combo_multiplier = 1        # Current combo multiplier
@@ -318,6 +325,17 @@ last_attack_time = 0        # Timestamp of the last successful attack
 pending_skeleton_level = 1  # Level of the next skeleton to spawn
 night_spawn_timer = 0       # Timer for automatic skeleton spawns
 world_play_time = 0         # Total time spent in this world (milliseconds)
+
+# --- Night Cinematic State ---
+night_cinematic = False
+night_started_at = 0
+pedestal_pos = (1, 0)
+pedestal_active = True
+skull_state = "idle"  # idle, rising, laugh
+skull_anim_start = 0
+skull_offset = 0
+fade_start = 0
+fade_progress = 0
 
 boulder_placement_mode = False  # Tracks if player is in boulder placement mode
 picked_boulder_pos = None  # Stores the position of the picked-up boulder
@@ -448,7 +466,7 @@ def draw_grid():
                 py = (y + 1 - (top_left_y - start_y)) * TILE_SIZE
                 under_rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
                 tile = world.get_tile(gx, gy)
-                if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.METAL, Tile.WOOD, Tile.HAT, Tile.TORCH]:
+                if tile in [Tile.LAND, Tile.TURRET, Tile.USED_LAND, Tile.SAPLING, Tile.TREE, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.METAL, Tile.WOOD, Tile.HAT, Tile.TORCH, Tile.SKULL_PEDESTAL]:
                     under_land_image = scaled_tile_images.get("UNDER_LAND")
                     if under_land_image:
                         game_surface.blit(under_land_image, under_rect)
@@ -465,7 +483,7 @@ def draw_grid():
             px = (x - (top_left_x - start_x)) * TILE_SIZE
             py = (y - (top_left_y - start_y)) * TILE_SIZE
             rect = pygame.Rect(px, py, TILE_SIZE, TILE_SIZE)
-            if tile in [Tile.TURRET, Tile.TREE, Tile.SAPLING, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL, Tile.HAT, Tile.TORCH]:
+            if tile in [Tile.TURRET, Tile.TREE, Tile.SAPLING, Tile.LOOT, Tile.WALL, Tile.BOULDER, Tile.STEERING_WHEEL, Tile.WOOD, Tile.METAL, Tile.HAT, Tile.TORCH, Tile.SKULL_PEDESTAL]:
                 # Render the base tile underneath
                 if tile == Tile.STEERING_WHEEL:
                     # For STEERING_WHEEL, render BOAT_TILE underneath
@@ -1074,20 +1092,47 @@ def show_night_summary():
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                 waiting = False
         clock.tick(60)
+    pygame.mixer.music.set_volume(MUSIC_VOLUME)
+    try:
+        pygame.mixer.music.load(MUSIC_FILES["afternoon"])
+        pygame.mixer.music.play(-1)
+    except Exception:
+        pass
 
 def end_night():
     """Reset state after the night battle and return to daytime."""
     global night_mode, day_paused, pirates, krakens, combo_points, combo_multiplier
     global night_spawn_timer, night_score, pending_skeleton_level, game_time
 
+    global night_cinematic, pedestal_active, skull_state
     night_score += combo_points * combo_multiplier
+    sound_thud.play()
+    pygame.mixer.music.set_volume(MUSIC_VOLUME * 0.3)
+
+    base = pygame.Surface((WIDTH, HEIGHT))
+    base.fill(BLACK)
+    down_img = scaled_tile_images["PLAYER_DOWNED"]
+    base.blit(down_img, (WIDTH//2 - TILE_SIZE//2, HEIGHT//2 - TILE_SIZE//2))
+    screen_w, screen_h = screen.get_size()
+    scaled = pygame.transform.scale(base, (WIDTH*SCALE, HEIGHT*SCALE))
+    blit_x = (screen_w - WIDTH*SCALE)//2
+    blit_y = (screen_h - HEIGHT*SCALE)//2
+    overlay = pygame.Surface((WIDTH*SCALE, HEIGHT*SCALE))
+    overlay.fill(BLACK)
+    for alpha in range(255, -1, -15):
+        screen.fill(BLACK)
+        screen.blit(scaled, (blit_x, blit_y))
+        overlay.set_alpha(alpha)
+        screen.blit(overlay, (blit_x, blit_y))
+        pygame.display.flip()
+        pygame.time.delay(20)
     show_night_summary()
-    # Remove all pirates and spawn the initial skeleton again
+    # Clear remaining enemies
     pirates.clear()
     krakens.clear()
 
     night_mode = False
-    day_paused = True
+    day_paused = False
     game_time = 28.0
     combo_points = 0
     combo_multiplier = 1
@@ -1095,7 +1140,10 @@ def end_night():
     pending_skeleton_level = 1
     night_score = 0
 
-    spawn_skeleton(1, immobile=True, near_player=True)
+    night_cinematic = False
+    pedestal_active = True
+    skull_state = "idle"
+    world.set_tile(pedestal_pos[0], pedestal_pos[1], Tile.SKULL_PEDESTAL)
 
 # --- Game Logic ---
 def screen_to_world(mouse_x, mouse_y):
@@ -1599,6 +1647,70 @@ def spawn_kraken():
         "despawn_timer": 0  # Timer for staying after failing to find a boat tile
     })
 
+# --- Night Cinematic Helpers ---
+def start_night_cinematic():
+    global night_cinematic, skull_state, skull_anim_start, skull_offset, fade_start
+    if night_cinematic or night_mode:
+        return
+    night_cinematic = True
+    skull_state = "rising"
+    skull_anim_start = pygame.time.get_ticks()
+    skull_offset = 0
+    fade_start = 0
+    sound_whoosh.play()
+
+def update_night_cinematic():
+    global skull_offset, skull_state, fade_start, fade_progress
+    global pedestal_active, night_mode, night_started_at, night_cinematic
+    global day_paused, game_time
+    if not night_cinematic:
+        return
+    now = pygame.time.get_ticks()
+    if skull_state == "rising":
+        progress = (now - skull_anim_start) / 2000.0
+        skull_offset = -48 * min(progress, 1.0)
+        if progress >= 1.0:
+            skull_state = "laugh"
+            fade_start = pygame.time.get_ticks()
+            sound_laugh.play(-1)
+    elif skull_state == "laugh":
+        fade_progress = min(1.0, (now - fade_start) / 1500.0)
+        if fade_progress >= 1.0:
+            pedestal_active = False
+            night_mode = True
+            day_paused = False
+            game_time = 80.0
+            night_started_at = pygame.time.get_ticks()
+            skull_state = "done"
+            sound_laugh.stop()
+            world.set_tile(pedestal_pos[0], pedestal_pos[1], Tile.LAND)
+            try:
+                pygame.mixer.music.load(MUSIC_FILES["night_battle"])
+                pygame.mixer.music.play(-1)
+            except Exception:
+                pass
+    elif skull_state == "done":
+        night_cinematic = False
+
+def draw_night_cinematic(surface):
+    if not night_cinematic and not (skull_state == "laugh" and fade_progress < 1.0):
+        return
+    px = (pedestal_pos[0] - (player_pos[0] - VIEW_WIDTH / 2.0)) * TILE_SIZE
+    py = (pedestal_pos[1] - (player_pos[1] - VIEW_HEIGHT / 2.0)) * TILE_SIZE
+    if skull_state in ("idle", "rising"):
+        skull_img = scaled_tile_images["SKULL"]
+        rect = skull_img.get_rect(center=(px + TILE_SIZE//2, py + skull_offset))
+        surface.blit(skull_img, rect)
+    if skull_state == "laugh" or (skull_state == "done" and fade_progress < 1.0):
+        sk_img = scaled_tile_images["SKELETON_LAUGH"]
+        rect = sk_img.get_rect(center=(px + TILE_SIZE//2, py + skull_offset - TILE_SIZE))
+        surface.blit(sk_img, rect)
+    if skull_state in ("laugh", "done"):
+        overlay = pygame.Surface((WIDTH, HEIGHT))
+        overlay.fill((16,16,32))
+        overlay.set_alpha(int(fade_progress * 255))
+        surface.blit(overlay, (0,0))
+
 def update_pirates():
     global pirates, pirates_killed, player_hat, hat_particles, hat_tiles, player_invul_timer
     global night_score, combo_points, combo_multiplier, night_spawn_timer
@@ -2047,13 +2159,6 @@ def update_projectiles():
         for p in pirates[:]:
             for pirate in p["pirates"][:]:
                 if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
-                    if pirate.get("is_skeleton") and not night_mode:
-                        night_mode = True
-                        day_paused = False
-                        game_time = 80
-                        last_attack_time = pygame.time.get_ticks()
-                        pending_skeleton_level = pirate["level"]
-                        pirate["immobile"] = False
                     # Store health before damage
                     pre_hit_health = pirate["health"]
                     pirate["health"] -= proj["damage"]
@@ -2426,6 +2531,9 @@ def interact(button):
             return
 
     if button == 1:  # Left-click: Pick up items or build
+        if tile == Tile.SKULL_PEDESTAL and pedestal_active and not night_mode and not night_cinematic:
+            start_night_cinematic()
+            return
         # Handle building mode placements
         if building_mode:
             if (x, y) in get_player_occupied_tiles():
@@ -2858,6 +2966,8 @@ def update_interaction_ui():
         interaction_ui["left_message"] = "Pick up Hat\n(Left Click)"
     elif tile in (Tile.WOOD, Tile.METAL):
         interaction_ui["left_message"] = f"Pick up { 'Wood' if tile == Tile.WOOD else 'Metal' }\n(Left Click)"
+    elif tile == Tile.SKULL_PEDESTAL and not night_mode and pedestal_active:
+        interaction_ui["left_message"] = "Invoke Night\n(Left Click)"
     elif tile in (Tile.TREE, Tile.SAPLING):
         interaction_ui["right_message"] = "Attack\n50% chance for Wood/Sapling\n(Right Click)"
     elif tile == Tile.BOULDER:
@@ -3030,7 +3140,7 @@ def update_music():
     """Loop through day or night tracks based on battle state."""
     global current_music, music_index
     if night_mode:
-        tracks = ["night", "late_night"]
+        tracks = ["night_battle"]
     else:
         tracks = ["morning", "afternoon"]
 
@@ -3064,12 +3174,11 @@ while running:
         days_survived += 1
         last_cycle_time = game_time - (game_time % cycle_length)  # Align to cycle boundary
     if day_paused and not night_mode:
-        if not any(any(pr.get("is_skeleton") for pr in p["pirates"]) for p in pirates):
-            spawn_skeleton(pending_skeleton_level, immobile=True, near_player=True)
-
+        pass  # Day continues without spawning a starter skeleton
 
     game_surface.fill(BLACK)
     update_music()
+    update_night_cinematic()
     update_sparks()
     update_wood_texts()
     update_xp_texts()
@@ -3090,6 +3199,7 @@ while running:
     else:
         selected_tile = None
     draw_grid()
+    draw_night_cinematic(game_surface)
     scaled_surface = pygame.transform.scale(game_surface, (WIDTH * SCALE, HEIGHT * SCALE))
     screen_width, screen_height = screen.get_size()
     blit_x = (screen_width - WIDTH * SCALE) // 2

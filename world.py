@@ -313,6 +313,12 @@ class World:
             )[0]
             self.set_tile(tx, ty, feature)
 
+        # Place the skull pedestal near the starting position
+        if self.get_tile(1, 0) == Tile.LAND:
+            self.set_tile(1, 0, Tile.SKULL_PEDESTAL)
+        else:
+            self.set_tile(0, 1, Tile.SKULL_PEDESTAL)
+
     def update_player_chunk(self, player_pos):
         self.player_chunk = self.world_to_chunk(player_pos[0], player_pos[1])
 
