@@ -69,6 +69,7 @@ screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 clock = pygame.time.Clock()
 
 xp_texts = []
+score_texts = []  # Floating texts for scoring feedback
 explosions = []
 sparks = []
 hat_particles = []
@@ -720,6 +721,15 @@ def draw_grid():
             text_surface.set_alpha(text["alpha"])
             text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 20))
             game_surface.blit(text_surface, text_rect)
+    for text in score_texts:
+        px = text["x"] - top_left_x
+        py = text["y"] - top_left_y
+        if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
+            font = get_font(14)
+            text_surface = font.render(text["text"], True, ORANGE)
+            text_surface.set_alpha(text["alpha"])
+            text_rect = text_surface.get_rect(center=(px * TILE_SIZE + TILE_SIZE // 2, py * TILE_SIZE - 15))
+            game_surface.blit(text_surface, text_rect)
 
     # Render player XP texts
     for text in player_xp_texts:
@@ -810,7 +820,8 @@ def draw_ui():
     font = get_font(28)
     score = night_score
     if night_mode and combo_multiplier > 1:
-        wood_text = font.render(f"Combo: {combo_multiplier}x", True, WHITE)
+        color = ORANGE if combo_multiplier >= 5 else WHITE
+        wood_text = font.render(f"Combo: {combo_multiplier}x", True, color)
     else:
         wood_text = font.render(f"Wood: {wood}", True, WHITE)
     score_text = font.render(f"Score: {score}", True, WHITE)
@@ -1132,10 +1143,17 @@ def end_night():
     """Reset state after the night battle and return to daytime."""
     global night_mode, day_paused, pirates, krakens, combo_points, combo_multiplier
     global night_spawn_timer, night_score, pending_skeleton_level, game_time
-    global last_hit_time
+    global last_hit_time, score_texts
 
     global night_cinematic, pedestal_active, skull_state
     night_score += combo_points * combo_multiplier
+    score_texts.append({
+        "x": player_pos[0],
+        "y": player_pos[1],
+        "text": f"+{combo_points * combo_multiplier}!",
+        "timer": 1000,
+        "alpha": 255,
+    })
     sound_thud.play()
     pygame.mixer.music.set_volume(MUSIC_VOLUME * 0.3)
 
@@ -2374,6 +2392,7 @@ def update_sparks():
 def update_projectiles():
     global pirates_killed, wood, player_xp, player_level, player_xp_texts, quests
     global night_score, combo_points, combo_multiplier, last_hit_time, pending_skeleton_level
+    global score_texts
     global night_mode, day_paused, game_time
     global player_invul_timer, player_hat
 
@@ -2385,20 +2404,51 @@ def update_projectiles():
         and now_tick - last_hit_time > NIGHT_COMBO_WINDOW
     ):
         night_score += combo_points * combo_multiplier
+        score_texts.append({
+            "x": player_pos[0],
+            "y": player_pos[1],
+            "text": f"+{combo_points * combo_multiplier}!",
+            "timer": 1000,
+            "alpha": 255,
+        })
         combo_points = 0
         combo_multiplier = 1
 
     def handle_pirate_hit(pirate, group, damage, from_player, counts_combo, turret_id):
         global pirates_killed, player_xp, player_level, player_xp_texts, quests
-        global combo_points, combo_multiplier, night_score, last_hit_time
+        global combo_points, combo_multiplier, night_score, last_hit_time, score_texts
         pre_hit_health = pirate["health"]
         pirate["health"] -= damage
+        night_score += 1
+        score_texts.append({
+            "x": pirate["x"],
+            "y": pirate["y"],
+            "text": "Nice hit!",
+            "timer": 500,
+            "alpha": 255,
+        })
         if counts_combo:
             now_tick = pygame.time.get_ticks()
             if now_tick - last_hit_time <= NIGHT_COMBO_WINDOW:
+                old = combo_multiplier
                 combo_multiplier += 1
+                if combo_multiplier > 1 and combo_multiplier > old:
+                    score_texts.append({
+                        "x": player_pos[0],
+                        "y": player_pos[1],
+                        "text": "Good combo!",
+                        "timer": 500,
+                        "alpha": 255,
+                    })
             else:
                 night_score += combo_points * combo_multiplier
+                score_texts.append({
+                    "x": player_pos[0],
+                    "y": player_pos[1],
+                    "text": f"+{combo_points * combo_multiplier}!",
+                    "timer": 1000,
+                    "alpha": 255,
+                })
                 combo_points = 0
                 combo_multiplier = 1
             last_hit_time = now_tick
@@ -2726,6 +2776,16 @@ def update_xp_texts():
             xp_texts.remove(text)
             continue
         text["y"] -= 0.02  # Move upward
+        text["alpha"] = int((text["timer"] / 1000) * 255)
+        text["alpha"] = max(0, min(255, text["alpha"]))
+
+def update_score_texts():
+    for text in score_texts[:]:
+        text["timer"] -= dt
+        if text["timer"] <= 0:
+            score_texts.remove(text)
+            continue
+        text["y"] -= 0.02
         text["alpha"] = int((text["timer"] / 1000) * 255)
         text["alpha"] = max(0, min(255, text["alpha"]))
 
@@ -3493,6 +3553,7 @@ while running:
     update_sparks()
     update_wood_texts()
     update_xp_texts()
+    update_score_texts()
     update_player_xp_texts()
     update_hat_particles()
     water_frame_timer += dt
