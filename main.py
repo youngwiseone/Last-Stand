@@ -3405,27 +3405,12 @@ def update_player_xp_texts():
         text["alpha"] = max(0, min(255, text["alpha"]))
 
 def get_darkness_factor(game_time):
-    cycle = 96.0  # Total cycle length: 48s day + 48s night
-    t = game_time % cycle
-    # Day: 7am (28s) to 7pm (76s)
-    if 28 <= t < 76:
-        return 0.0  # Full day
-    # Fade-in: 7pm (76s) to 8pm (80s)
-    elif 76 <= t < 80:
-        progress = (t - 76) / 4  # 4-second fade (doubled from 2s)
-        return progress
-    # Full night: 8pm (80s) to 6am (24s next cycle)
-    elif (80 <= t < 96) or (0 <= t < 24):
-        return 1.0  # Full night
-    # Fade-out: 6am (24s) to 7am (28s)
-    elif 24 <= t < 28:
-        progress = (t - 24) / 4  # 4-second fade (doubled from 2s)
-        return 1.0 - progress
-    return 0.0
+    """Return 1.0 when the night battle is active, else 0.0."""
+    return 1.0 if night_mode else 0.0
 
 def is_night(game_time):
-    t = game_time % 96
-    return t >= 76 or t < 28  # Night from 76s (7pm) to 28s (7am)
+    """Night now depends solely on the battle state."""
+    return night_mode
 
     
 def update_music():
@@ -3470,14 +3455,12 @@ while running:
     if player_invul_timer > 0:
         player_invul_timer = max(0, player_invul_timer - dt)
 
-    if not day_paused and not night_mode:
-        game_time += dt / 1000.0  # Convert milliseconds to seconds
+    game_time += dt / 1000.0  # Track time but no longer governs night
+
     cycle_length = 96.0  # One day-night cycle in seconds
     if game_time - last_cycle_time >= cycle_length:
         days_survived += 1
         last_cycle_time = game_time - (game_time % cycle_length)  # Align to cycle boundary
-    if day_paused and not night_mode:
-        pass  # Day continues without spawning a starter skeleton
 
     game_surface.fill(BLACK)
     update_music()
@@ -3560,7 +3543,7 @@ while running:
 
     pirate_spawn_timer += dt
     t = game_time % 96
-    if pirate_spawn_timer >= spawn_delay and ((t > 24 and t < 28) or (t >= 76 and t < 96)):
+    if night_mode and pirate_spawn_timer >= spawn_delay:
         spawn_pirate()
         spawn_dark_land_pirate()
         spawn_kraken()
