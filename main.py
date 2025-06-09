@@ -2365,6 +2365,7 @@ def update_projectiles():
     global pirates_killed, wood, player_xp, player_level, player_xp_texts, quests
     global night_score, combo_points, combo_multiplier, last_attack_time, pending_skeleton_level
     global night_mode, day_paused, game_time
+    global player_invul_timer, player_hat
 
     def handle_pirate_hit(pirate, group, damage, from_player, turret_id):
         global pirates_killed, player_xp, player_level, player_xp_texts, quests
@@ -2545,32 +2546,33 @@ def update_projectiles():
                     return
 
         hit = False
-        for p in pirates[:]:
-            for pirate in p["pirates"][:]:
-                if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
-                    handle_pirate_hit(pirate, p, proj["damage"], proj.get("player"), proj.get("turret_id"))
-                    if proj.get("player_fireball"):
-                        for gp in pirates:
-                            for other in gp["pirates"][:]:
-                                if other is pirate:
-                                    continue
-                                if math.hypot(other["x"] - pirate["x"], other["y"] - pirate["y"]) <= 2:
-                                    handle_pirate_hit(other, gp, proj["damage"], True, None)
-                    hit = True
-                    break
-                if hit:
-                    break
+        if not proj.get("from_mage"):
+            for p in pirates[:]:
+                for pirate in p["pirates"][:]:
+                    if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
+                        handle_pirate_hit(pirate, p, proj["damage"], proj.get("player"), proj.get("turret_id"))
+                        if proj.get("player_fireball"):
+                            for gp in pirates:
+                                for other in gp["pirates"][:]:
+                                    if other is pirate:
+                                        continue
+                                    if math.hypot(other["x"] - pirate["x"], other["y"] - pirate["y"]) <= 2:
+                                        handle_pirate_hit(other, gp, proj["damage"], True, None)
+                        hit = True
+                        break
+                    if hit:
+                        break
 
-            for s in p["ship"][:]:
-                if abs(proj["x"] - s["x"]) < 0.3 and abs(proj["y"] - s["y"]) < 0.3:
-                    p["ship"].remove(s)
-                    hit = True
-                    break
-                if hit:
-                    break
+                for s in p["ship"][:]:
+                    if abs(proj["x"] - s["x"]) < 0.3 and abs(proj["y"] - s["y"]) < 0.3:
+                        p["ship"].remove(s)
+                        hit = True
+                        break
+                    if hit:
+                        break
 
-            if not p["pirates"] and not p["ship"]:
-                pirates_to_remove.add(id(p))
+                if not p["pirates"] and not p["ship"]:
+                    pirates_to_remove.add(id(p))
 
         if hit and proj in projectiles:
             projectiles.remove(proj)
@@ -3542,7 +3544,6 @@ while running:
     npc_manager.spawn_npcs(game_state, player_pos, VIEW_WIDTH, VIEW_HEIGHT)
 
     pirate_spawn_timer += dt
-    t = game_time % 96
     if night_mode and pirate_spawn_timer >= spawn_delay:
         spawn_pirate()
         spawn_dark_land_pirate()
