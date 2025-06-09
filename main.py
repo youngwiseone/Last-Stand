@@ -1885,7 +1885,7 @@ def spawn_kraken():
 
 # --- Night Cinematic Helpers ---
 def start_night_cinematic():
-    global night_cinematic, skull_state, skull_anim_start, skull_offset, fade_start
+    global night_cinematic, skull_state, skull_anim_start, skull_offset, fade_start, pedestal_active
     if night_cinematic or night_mode:
         return
     night_cinematic = True
@@ -1893,6 +1893,10 @@ def start_night_cinematic():
     skull_anim_start = pygame.time.get_ticks()
     skull_offset = 0
     fade_start = 0
+    # Immediately hide the pedestal when starting the cinematic so the
+    # floating skull emerges from an empty tile.
+    pedestal_active = False
+    world.set_tile(pedestal_pos[0], pedestal_pos[1], Tile.LAND)
     sound_whoosh.play()
 
 def update_night_cinematic():
