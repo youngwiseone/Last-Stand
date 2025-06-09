@@ -308,7 +308,9 @@ land_spread_time = 30000
 
 pirates = []
 pirate_spawn_timer = 0
-spawn_delay = 3000
+# Starting delay for enemy spawns (ms)
+BASE_SPAWN_DELAY = 15000
+spawn_delay = BASE_SPAWN_DELAY
 pirate_walk_delay = 300
 
 wall_levels = {}
@@ -319,9 +321,9 @@ WALL_MAX_LEVEL = 99
 night_mode = False          # True when the player has triggered the night fight
 day_paused = False          # Daytime starts running immediately
 night_score = 0             # Score accumulated during the night
-combo_points = 0            # Points collected in the current combo chain
+combo_points = 0            # Kills collected in the current combo chain
 combo_multiplier = 1        # Current combo multiplier
-last_attack_time = 0        # Timestamp of the last successful attack
+last_hit_time = 0           # Timestamp of the last successful hit
 pending_skeleton_level = 1  # Level of the next skeleton to spawn
 night_spawn_timer = 0       # Timer for automatic skeleton spawns
 world_play_time = 0         # Total time spent in this world (milliseconds)
@@ -806,7 +808,7 @@ def draw_grid():
 
 def draw_ui():
     font = get_font(28)
-    score = turrets_placed + pirates_killed + tiles_placed + days_survived
+    score = night_score
     if night_mode and combo_multiplier > 1:
         wood_text = font.render(f"Combo: {combo_multiplier}x", True, WHITE)
     else:
@@ -1012,7 +1014,7 @@ def draw_player(top_left_x, top_left_y):
 
 def show_game_over():
     global high_score, fade_done
-    score = turrets_placed + pirates_killed + tiles_placed + days_survived
+    score = night_score
     if score > high_score:
         high_score = score
         with open("score.txt", "w") as f:
@@ -1130,6 +1132,7 @@ def end_night():
     """Reset state after the night battle and return to daytime."""
     global night_mode, day_paused, pirates, krakens, combo_points, combo_multiplier
     global night_spawn_timer, night_score, pending_skeleton_level, game_time
+    global last_hit_time
 
     global night_cinematic, pedestal_active, skull_state
     night_score += combo_points * combo_multiplier
@@ -1163,6 +1166,7 @@ def end_night():
     game_time = 28.0
     combo_points = 0
     combo_multiplier = 1
+    last_hit_time = 0
     night_spawn_timer = 0
     pending_skeleton_level = 1
     night_score = 0
@@ -1877,6 +1881,7 @@ def update_night_cinematic():
     global skull_offset, skull_state, fade_start, fade_progress
     global pedestal_active, night_mode, night_started_at, night_cinematic
     global day_paused, game_time
+    global night_score, combo_points, combo_multiplier, last_hit_time
     if not night_cinematic:
         return
     now = pygame.time.get_ticks()
@@ -1895,6 +1900,10 @@ def update_night_cinematic():
             day_paused = False
             game_time = 80.0
             night_started_at = pygame.time.get_ticks()
+            night_score = 0
+            combo_points = 0
+            combo_multiplier = 1
+            last_hit_time = 0
             skull_state = "done"
             sound_laugh.stop()
             world.set_tile(pedestal_pos[0], pedestal_pos[1], Tile.LAND)
@@ -1934,7 +1943,8 @@ def update_pirates():
         skeleton_count = sum(
             1 for g in pirates for pir in g["pirates"] if pir.get("is_skeleton")
         )
-        if night_spawn_timer >= NIGHT_SPAWN_INTERVAL and skeleton_count < NIGHT_ENEMY_LIMIT:
+        spawn_interval = max(5000, BASE_SPAWN_DELAY - int(night_survival_time * 500))
+        if night_spawn_timer >= spawn_interval and skeleton_count < NIGHT_ENEMY_LIMIT:
             spawn_skeleton(1)
             night_spawn_timer = 0
     for p in pirates[:]:
@@ -2363,25 +2373,35 @@ def update_sparks():
 
 def update_projectiles():
     global pirates_killed, wood, player_xp, player_level, player_xp_texts, quests
-    global night_score, combo_points, combo_multiplier, last_attack_time, pending_skeleton_level
+    global night_score, combo_points, combo_multiplier, last_hit_time, pending_skeleton_level
     global night_mode, day_paused, game_time
     global player_invul_timer, player_hat
 
-    def handle_pirate_hit(pirate, group, damage, from_player, turret_id):
+    # Finalize combos if too much time has passed since the last hit
+    now_tick = pygame.time.get_ticks()
+    if (
+        night_mode
+        and combo_points > 0
+        and now_tick - last_hit_time > NIGHT_COMBO_WINDOW
+    ):
+        night_score += combo_points * combo_multiplier
+        combo_points = 0
+        combo_multiplier = 1
+
+    def handle_pirate_hit(pirate, group, damage, from_player, counts_combo, turret_id):
         global pirates_killed, player_xp, player_level, player_xp_texts, quests
-        global combo_points, combo_multiplier, night_score, last_attack_time
+        global combo_points, combo_multiplier, night_score, last_hit_time
         pre_hit_health = pirate["health"]
         pirate["health"] -= damage
-        if from_player:
+        if counts_combo:
             now_tick = pygame.time.get_ticks()
-            if now_tick - last_attack_time <= NIGHT_COMBO_WINDOW:
+            if now_tick - last_hit_time <= NIGHT_COMBO_WINDOW:
                 combo_multiplier += 1
             else:
                 night_score += combo_points * combo_multiplier
                 combo_points = 0
                 combo_multiplier = 1
-            combo_points += pirate["level"]
-            last_attack_time = now_tick
+            last_hit_time = now_tick
         if pre_hit_health > 1 and pirate["health"] == 1:
             hat_particles.append({
                 "x": pirate["x"],
@@ -2417,6 +2437,8 @@ def update_projectiles():
                 hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
             pirate["has_dropped_hat"] = True
         if pirate["health"] <= 0:
+            if counts_combo:
+                combo_points += 1
             if pirate.get("is_skeleton") and night_mode:
                 new_level = min(SKELETON_MAX_LEVEL, pirate["level"] + 1)
                 if len(pirates) < NIGHT_ENEMY_LIMIT:
@@ -2550,14 +2572,15 @@ def update_projectiles():
             for p in pirates[:]:
                 for pirate in p["pirates"][:]:
                     if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
-                        handle_pirate_hit(pirate, p, proj["damage"], proj.get("player"), proj.get("turret_id"))
+                        combo_hit = bool(proj.get("player") or proj.get("turret_id"))
+                        handle_pirate_hit(pirate, p, proj["damage"], proj.get("player"), combo_hit, proj.get("turret_id"))
                         if proj.get("player_fireball"):
                             for gp in pirates:
                                 for other in gp["pirates"][:]:
                                     if other is pirate:
                                         continue
                                     if math.hypot(other["x"] - pirate["x"], other["y"] - pirate["y"]) <= 2:
-                                        handle_pirate_hit(other, gp, proj["damage"], True, None)
+                                        handle_pirate_hit(other, gp, proj["damage"], True, True, None)
                         hit = True
                         break
                     if hit:
@@ -3544,7 +3567,8 @@ while running:
     npc_manager.spawn_npcs(game_state, player_pos, VIEW_WIDTH, VIEW_HEIGHT)
 
     pirate_spawn_timer += dt
-    if night_mode and pirate_spawn_timer >= spawn_delay:
+    dynamic_delay = max(5000, spawn_delay - int(night_survival_time * 500))
+    if night_mode and pirate_spawn_timer >= dynamic_delay:
         spawn_pirate()
         spawn_dark_land_pirate()
         spawn_kraken()
@@ -3554,7 +3578,7 @@ while running:
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
-            score = turrets_placed + pirates_killed + tiles_placed
+            score = night_score
             if score > high_score:
                 with open("score.txt", "w") as f:
                     f.write(str(score))
