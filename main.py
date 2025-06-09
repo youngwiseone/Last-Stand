@@ -325,6 +325,9 @@ last_attack_time = 0        # Timestamp of the last successful attack
 pending_skeleton_level = 1  # Level of the next skeleton to spawn
 night_spawn_timer = 0       # Timer for automatic skeleton spawns
 world_play_time = 0         # Total time spent in this world (milliseconds)
+night_survival_time = 0     # Seconds survived in the current night
+prev_is_night = False       # Tracks if the previous frame was during the night
+night_rare_chance = 0       # Chance of rare pirates this night
 
 # --- Night Cinematic State ---
 night_cinematic = False
@@ -424,6 +427,23 @@ def draw_grid():
             local_ny = ny - start_y
             if 0 <= local_nx < VIEW_WIDTH and 0 <= local_ny < VIEW_HEIGHT:
                 brightness[local_ny][local_nx] = max(brightness[local_ny][local_nx], 0.5)
+
+    # Light from casting pirate mages
+    for group in pirates:
+        for pirate in group.get("pirates", []):
+            if pirate.get("is_mage") and pirate.get("casting"):
+                sx = int(pirate["x"])
+                sy = int(pirate["y"])
+                local_x = sx - start_x
+                local_y = sy - start_y
+                if 0 <= local_x < VIEW_WIDTH and 0 <= local_y < VIEW_HEIGHT:
+                    brightness[local_y][local_x] = max(brightness[local_y][local_x], 0.9)
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nx, ny = sx + dx, sy + dy
+                    lx = nx - start_x
+                    ly = ny - start_y
+                    if 0 <= lx < VIEW_WIDTH and 0 <= ly < VIEW_HEIGHT:
+                        brightness[ly][lx] = max(brightness[ly][lx], 0.5)
 
     # First pass: Render base tiles without darkness
     now = pygame.time.get_ticks()
@@ -762,7 +782,8 @@ def draw_grid():
         px = proj["x"] - top_left_x
         py = proj["y"] - top_left_y
         if 0 <= px < VIEW_WIDTH and 0 <= py < VIEW_HEIGHT:
-            pygame.draw.circle(game_surface, DARK_GRAY, (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 4)
+            color = ORANGE if proj.get("from_mage") or proj.get("player_fireball") else DARK_GRAY
+            pygame.draw.circle(game_surface, color, (int(px * TILE_SIZE + TILE_SIZE // 2), int(py * TILE_SIZE + TILE_SIZE // 2)), 4)
 
     # Apply darkness overlay using world-coordinate-based positioning
     darkness_surface.fill((0, 0, 0, 0))
@@ -1018,6 +1039,7 @@ def show_game_over():
         f"Turrets Placed: {turrets_placed}",
         f"Pirates Killed: {pirates_killed}",
         f"Tiles Placed: {tiles_placed}",
+        f"Night Survival: {int(night_survival_time)}s",
         "",
         "Press SPACE to restart or ESC to quit"
     ]
@@ -1063,6 +1085,7 @@ def show_night_summary():
         "Night Ended!",
         f"Score: {night_score}",
         f"Time Played: {minutes}m {seconds:02d}s",
+        f"Night Survival: {int(night_survival_time)}s",
         "",
         "Press SPACE to continue"
     ]
@@ -1504,6 +1527,23 @@ def compute_brightness_map():
             ly = ny - start_y
             if 0 <= lx < VIEW_WIDTH and 0 <= ly < VIEW_HEIGHT:
                 brightness[ly][lx] = max(brightness[ly][lx], 0.33)
+
+    # Include light from casting pirate mages
+    for group in pirates:
+        for pirate in group.get("pirates", []):
+            if pirate.get("is_mage") and pirate.get("casting"):
+                sx = int(pirate["x"])
+                sy = int(pirate["y"])
+                local_x = sx - start_x
+                local_y = sy - start_y
+                if 0 <= local_x < VIEW_WIDTH and 0 <= local_y < VIEW_HEIGHT:
+                    brightness[local_y][local_x] = max(brightness[local_y][local_x], 0.9)
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nx, ny = sx + dx, sy + dy
+                    lx = nx - start_x
+                    ly = ny - start_y
+                    if 0 <= lx < VIEW_WIDTH and 0 <= ly < VIEW_HEIGHT:
+                        brightness[ly][lx] = max(brightness[ly][lx], 0.5)
     return brightness
 
 def spawn_pirate():
@@ -1556,7 +1596,10 @@ def spawn_pirate():
     pirates_data = []
     for i, (px, py) in enumerate(pirate_positions):
         level = pirate_levels[i]
-        is_rare = random.random() < 1/3  # 1 in 3 chance
+        if is_night(game_time):
+            is_rare = random.random() < night_rare_chance
+        else:
+            is_rare = random.random() < 1/3
         rare_type = random.choice(RARE_PIRATE_TYPES) if is_rare else None
         max_health = 2 ** level
         if is_rare and rare_type == "tanky":
@@ -1623,7 +1666,10 @@ def spawn_dark_land_pirate():
     _, px, py = candidates[0]
 
     level = 1
-    is_rare = random.random() < 1/3
+    if is_night(game_time):
+        is_rare = random.random() < night_rare_chance
+    else:
+        is_rare = random.random() < 1/3
     rare_type = random.choice(RARE_PIRATE_TYPES) if is_rare else None
     max_health = 2 ** level
     if is_rare and rare_type == "tanky":
@@ -1720,6 +1766,57 @@ def spawn_skeleton(level, immobile=False, near_player=False):
         {
             "x": sx,
             "y": sy,
+            "dir": (0, 0),
+            "state": "walk",
+            "ship": [],
+            "pirates": [pirate_data],
+        }
+    )
+
+def spawn_pirate_mage():
+    """Spawn a stationary casting pirate mage on a random land tile."""
+    global pirates
+    cx, cy = world.player_chunk
+    chunk_keys = [
+        (cx + dx, cy + dy)
+        for dx in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
+        for dy in range(-VIEW_CHUNKS // 2, VIEW_CHUNKS // 2 + 1)
+    ]
+    possible_land = []
+    for chunk_key in chunk_keys:
+        if chunk_key not in world.chunks:
+            continue
+        chunk = world.chunks[chunk_key]
+        for ty in range(CHUNK_SIZE):
+            for tx in range(CHUNK_SIZE):
+                if chunk[ty][tx] != Tile.WATER:
+                    wx, wy = world.chunk_to_world(chunk_key[0], chunk_key[1], tx, ty)
+                    possible_land.append((wx, wy))
+    if not possible_land:
+        return
+    px, py = random.choice(possible_land)
+    pirate_data = {
+        "x": float(px),
+        "y": float(py),
+        "start_x": float(px),
+        "start_y": float(py),
+        "target_x": float(px),
+        "target_y": float(py),
+        "move_progress": 1.0,
+        "move_duration": 300,
+        "health": 4,
+        "max_health": 4,
+        "xp_value": 2,
+        "level": 1,
+        "is_rare": True,
+        "rare_type": "mage",
+        "is_mage": True,
+        "casting": False,
+    }
+    pirates.append(
+        {
+            "x": px,
+            "y": py,
             "dir": (0, 0),
             "state": "walk",
             "ship": [],
@@ -1899,6 +1996,33 @@ def update_pirates():
                 if pirate.get("fade_timer", 0) > 0:
                     pirate["fade_timer"] = max(0, pirate["fade_timer"] - dt)
                     continue
+                if pirate.get("is_mage"):
+                    if pirate.get("casting"):
+                        if now - pirate.get("cast_start", 0) >= 1500:
+                            dx = player_pos[0] - pirate["x"]
+                            dy = player_pos[1] - pirate["y"]
+                            length = math.hypot(dx, dy) or 1
+                            projectiles.append({
+                                "x": pirate["x"],
+                                "y": pirate["y"],
+                                "start_x": pirate["x"],
+                                "start_y": pirate["y"],
+                                "dir": (dx / length, dy / length),
+                                "damage": 1,
+                                "from_mage": True,
+                            })
+                            pirate["casting"] = False
+                    else:
+                        dist_to_player = math.hypot(pirate["x"] - player_pos[0], pirate["y"] - player_pos[1])
+                        if dist_to_player <= PIRATE_MAGE_RANGE:
+                            pirate["casting"] = True
+                            pirate["cast_start"] = now
+                            pirate["start_x"] = pirate["x"]
+                            pirate["start_y"] = pirate["y"]
+                            pirate["target_x"] = pirate["x"]
+                            pirate["target_y"] = pirate["y"]
+                            pirate["move_progress"] = 1.0
+                            continue
                 if pirate["move_progress"] < 1.0:
                     elapsed = dt
                     pirate["move_progress"] = min(1.0, pirate["move_progress"] + elapsed / pirate["move_duration"])
@@ -2241,6 +2365,117 @@ def update_projectiles():
     global pirates_killed, wood, player_xp, player_level, player_xp_texts, quests
     global night_score, combo_points, combo_multiplier, last_attack_time, pending_skeleton_level
     global night_mode, day_paused, game_time
+
+    def handle_pirate_hit(pirate, group, damage, from_player, turret_id):
+        global pirates_killed, player_xp, player_level, player_xp_texts, quests
+        global combo_points, combo_multiplier, night_score, last_attack_time
+        pre_hit_health = pirate["health"]
+        pirate["health"] -= damage
+        if from_player:
+            now_tick = pygame.time.get_ticks()
+            if now_tick - last_attack_time <= NIGHT_COMBO_WINDOW:
+                combo_multiplier += 1
+            else:
+                night_score += combo_points * combo_multiplier
+                combo_points = 0
+                combo_multiplier = 1
+            combo_points += pirate["level"]
+            last_attack_time = now_tick
+        if pre_hit_health > 1 and pirate["health"] == 1:
+            hat_particles.append({
+                "x": pirate["x"],
+                "y": pirate["y"] - 0.5,
+                "vel_x": random.uniform(-0.05, 0.05),
+                "vel_y": -0.1,
+                "rotation": 0,
+                "rotation_speed": random.uniform(-10, 10),
+                "timer": 1000,
+                "initial_timer": 1000,
+                "level": pirate["level"],
+                "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None,
+            })
+            if world.get_tile(int(pirate["x"]), int(pirate["y"])) == Tile.LAND and random.random() < 0.5:
+                world.set_tile(int(pirate["x"]), int(pirate["y"]), Tile.HAT)
+                hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
+            pirate["has_dropped_hat"] = True
+        if pirate["health"] <= 0 and not pirate.get("has_dropped_hat", False):
+            hat_particles.append({
+                "x": pirate["x"],
+                "y": pirate["y"] - 0.5,
+                "vel_x": random.uniform(-0.05, 0.05),
+                "vel_y": -0.1,
+                "rotation": 0,
+                "rotation_speed": random.uniform(-10, 10),
+                "timer": 1000,
+                "initial_timer": 1000,
+                "level": pirate["level"],
+                "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None,
+            })
+            if world.get_tile(int(pirate["x"]), int(pirate["y"])) == Tile.LAND and random.random() < 0.5:
+                world.set_tile(int(pirate["x"]), int(pirate["y"]), Tile.HAT)
+                hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
+            pirate["has_dropped_hat"] = True
+        if pirate["health"] <= 0:
+            if pirate.get("is_skeleton") and night_mode:
+                new_level = min(SKELETON_MAX_LEVEL, pirate["level"] + 1)
+                if len(pirates) < NIGHT_ENEMY_LIMIT:
+                    spawn_skeleton(new_level)
+            if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
+                for key in ["fuse_timer", "fuse_count", "last_count_update"]:
+                    pirate.pop(key, None)
+            if pirate.get("is_rare", False):
+                pirate_tile_x, pirate_tile_y = int(pirate["x"]), int(pirate["y"])
+                tile_type = world.get_tile(pirate_tile_x, pirate_tile_y)
+                if (
+                    tile_type in MOVEMENT_TILES
+                    and tile_type not in (Tile.WATER, Tile.BOAT, Tile.TURRET)
+                    and random.random() < 0.33
+                ):
+                    world.set_tile(pirate_tile_x, pirate_tile_y, Tile.LOOT)
+            group["pirates"].remove(pirate)
+            pirates_killed += 1
+            explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
+            if turret_id and turret_id in turret_levels:
+                xp_value = pirate["xp_value"]
+                turret_xp[turret_id] = turret_xp.get(turret_id, 0) + xp_value
+                xp_texts.append({
+                    "x": turret_id[0],
+                    "y": turret_id[1],
+                    "text": f"+{xp_value} XP",
+                    "timer": 1000,
+                    "alpha": 255,
+                })
+                level = turret_levels[turret_id]
+                xp_needed = math.pow(2, level - 1)
+                if level < TURRET_MAX_LEVEL and turret_xp[turret_id] >= xp_needed:
+                    turret_levels[turret_id] += 1
+                    turret_xp[turret_id] -= xp_needed
+            if from_player:
+                xp_gained = pirate["xp_value"]
+                player_xp += xp_gained
+                player_xp_texts.append({
+                    "x": player_pos[0],
+                    "y": player_pos[1],
+                    "text": f"+{xp_gained} XP",
+                    "timer": 1000,
+                    "alpha": 255,
+                })
+                while player_level < player_max_level and player_xp >= math.pow(2, player_level - 1):
+                    player_xp -= math.pow(2, player_level - 1)
+                    player_level += 1
+                    player_xp_texts.append({
+                        "x": player_pos[0],
+                        "y": player_pos[1],
+                        "text": f"Level Up! Level {player_level}",
+                        "timer": 1000,
+                        "alpha": 255,
+                    })
+                if "pirate_hunter_quest_count" in quests:
+                    quests["pirate_hunter_quest_count"] += 1
+                    print(
+                        f"Pirate killed, quest progress: {quests['pirate_hunter_quest_count']}/{5 + (quests.get('pirate_hunter_quest_completed', 0) * 2)}"
+                    )
+
     base_projectile_speed = 0.2
     scaled_projectile_speed = base_projectile_speed * get_speed_multiplier()
     pirates_to_remove = set()
@@ -2250,7 +2485,12 @@ def update_projectiles():
         next_y = proj["y"] + proj["dir"][1] * scaled_projectile_speed
         tile_x, tile_y = int(next_x), int(next_y)
 
-        max_distance = 2 * TURRET_RANGE if proj.get("player") else TURRET_RANGE
+        if proj.get("player"):
+            max_distance = 2 * TURRET_RANGE
+        elif proj.get("from_mage"):
+            max_distance = PIRATE_MAGE_RANGE
+        else:
+            max_distance = TURRET_RANGE
         distance_traveled = math.hypot(next_x - proj["start_x"], next_y - proj["start_y"])
         if distance_traveled > max_distance:
             projectiles.remove(proj)
@@ -2278,118 +2518,44 @@ def update_projectiles():
         proj["x"] = next_x
         proj["y"] = next_y
 
+        # Check collision with the player for mage fireballs
+        if proj.get("from_mage"):
+            dist = math.hypot(proj["x"] - player_pos[0], proj["y"] - player_pos[1])
+            if dist < 0.5 and player_invul_timer <= 0:
+                if player_hat:
+                    hat_particles.append({
+                        "x": player_pos[0],
+                        "y": player_pos[1] - 0.5,
+                        "vel_x": random.uniform(-0.05, 0.05),
+                        "vel_y": -0.1,
+                        "rotation": 0,
+                        "rotation_speed": random.uniform(-10, 10),
+                        "timer": 1000,
+                        "initial_timer": 1000,
+                        "level": player_hat["level"],
+                        "rare_type": player_hat.get("rare_type")
+                    })
+                    apply_hat_loss_effect(player_hat)
+                    player_invul_timer = BASE_HAT_INVUL_TIME
+                    player_hat = None
+                else:
+                    end_night()
+                    if proj in projectiles:
+                        projectiles.remove(proj)
+                    return
+
         hit = False
         for p in pirates[:]:
             for pirate in p["pirates"][:]:
                 if abs(proj["x"] - pirate["x"]) < 0.5 and abs(proj["y"] - pirate["y"]) < 0.5:
-                    # Store health before damage
-                    pre_hit_health = pirate["health"]
-                    pirate["health"] -= proj["damage"]
-                    if proj.get("player"):
-                        now_tick = pygame.time.get_ticks()
-                        if now_tick - last_attack_time <= NIGHT_COMBO_WINDOW:
-                            combo_multiplier += 1
-                        else:
-                            night_score += combo_points * combo_multiplier
-                            combo_points = 0
-                            combo_multiplier = 1
-                        combo_points += pirate["level"]
-                        last_attack_time = now_tick
-                    # Check if health reaches 1 or if this hit kills the pirate
-                    if pre_hit_health > 1 and pirate["health"] == 1:
-                        # Health exactly at 1, spawn hat
-                        hat_particles.append({
-                            "x": pirate["x"],
-                            "y": pirate["y"] - 0.5,
-                            "vel_x": random.uniform(-0.05, 0.05),
-                            "vel_y": -0.1,
-                            "rotation": 0,
-                            "rotation_speed": random.uniform(-10, 10),
-                            "timer": 1000,
-                            "initial_timer": 1000,
-                            "level": pirate["level"],
-                            "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None
-                        })
-                        if world.get_tile(int(pirate["x"]), int(pirate["y"])) == Tile.LAND and random.random() < 0.5:
-                            world.set_tile(int(pirate["x"]), int(pirate["y"]), Tile.HAT)
-                            hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
-                        pirate["has_dropped_hat"] = True
-                    if pirate["health"] <= 0 and not pirate.get("has_dropped_hat", False):
-                        # Lethal hit and no hat dropped yet, spawn hat
-                        hat_particles.append({
-                            "x": pirate["x"],
-                            "y": pirate["y"] - 0.5,
-                            "vel_x": random.uniform(-0.05, 0.05),
-                            "vel_y": -0.1,
-                            "rotation": 0,
-                            "rotation_speed": random.uniform(-10, 10),
-                            "timer": 1000,
-                            "initial_timer": 1000,
-                            "level": pirate["level"],
-                            "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None
-                        })
-                        if world.get_tile(int(pirate["x"]), int(pirate["y"])) == Tile.LAND and random.random() < 0.5:
-                            world.set_tile(int(pirate["x"]), int(pirate["y"]), Tile.HAT)
-                            hat_tiles[(int(pirate["x"]), int(pirate["y"]))] = {"level": pirate["level"], "rare_type": pirate.get("rare_type") if pirate.get("is_rare") else None}
-                        pirate["has_dropped_hat"] = True
-                    if pirate["health"] <= 0:
-                        if pirate.get("is_skeleton") and night_mode:
-                            new_level = min(SKELETON_MAX_LEVEL, pirate["level"] + 1)
-                            if len(pirates) < NIGHT_ENEMY_LIMIT:
-                                spawn_skeleton(new_level)
-                        if pirate.get("is_rare", False) and pirate.get("rare_type") == "explosive":
-                            for key in ["fuse_timer", "fuse_count", "last_count_update"]:
-                                pirate.pop(key, None)
-                        # Check for rare pirate loot drop
-                        if pirate.get("is_rare", False):
-                            pirate_tile_x, pirate_tile_y = int(pirate["x"]), int(pirate["y"])
-                            tile_type = world.get_tile(pirate_tile_x, pirate_tile_y)
-                            if (tile_type in MOVEMENT_TILES and 
-                                tile_type not in (Tile.WATER, Tile.BOAT, Tile.TURRET) and 
-                                random.random() < 0.33):
-                                world.set_tile(pirate_tile_x, pirate_tile_y, Tile.LOOT)
-                        p["pirates"].remove(pirate)
-                        pirates_killed += 1
-                        explosions.append({"x": pirate["x"], "y": pirate["y"], "timer": 500})
-                        turret_id = proj.get("turret_id")
-                        if turret_id and turret_id in turret_levels:
-                            xp_value = pirate["xp_value"]
-                            turret_xp[turret_id] = turret_xp.get(turret_id, 0) + xp_value
-                            xp_texts.append({
-                                "x": turret_id[0],
-                                "y": turret_id[1],
-                                "text": f"+{xp_value} XP",
-                                "timer": 1000,
-                                "alpha": 255
-                            })
-                            level = turret_levels[turret_id]
-                            xp_needed = math.pow(2, level - 1)
-                            if level < TURRET_MAX_LEVEL and turret_xp[turret_id] >= xp_needed:
-                                turret_levels[turret_id] += 1
-                                turret_xp[turret_id] -= xp_needed
-                        if proj.get("player"):
-                            xp_gained = pirate["xp_value"]
-                            player_xp += xp_gained
-                            player_xp_texts.append({
-                                "x": player_pos[0],
-                                "y": player_pos[1],
-                                "text": f"+{xp_gained} XP",
-                                "timer": 1000,
-                                "alpha": 255
-                            })
-                            while player_level < player_max_level and player_xp >= math.pow(2, player_level - 1):
-                                player_xp -= math.pow(2, player_level - 1)
-                                player_level += 1
-                                player_xp_texts.append({
-                                    "x": player_pos[0],
-                                    "y": player_pos[1],
-                                    "text": f"Level Up! Level {player_level}",
-                                    "timer": 1000,
-                                    "alpha": 255
-                                })
-                            if "pirate_hunter_quest_count" in quests:
-                                quests["pirate_hunter_quest_count"] += 1
-                                print(f"Pirate killed, quest progress: {quests['pirate_hunter_quest_count']}/{5 + (quests.get('pirate_hunter_quest_completed', 0) * 2)}")
+                    handle_pirate_hit(pirate, p, proj["damage"], proj.get("player"), proj.get("turret_id"))
+                    if proj.get("player_fireball"):
+                        for gp in pirates:
+                            for other in gp["pirates"][:]:
+                                if other is pirate:
+                                    continue
+                                if math.hypot(other["x"] - pirate["x"], other["y"] - pirate["y"]) <= 2:
+                                    handle_pirate_hit(other, gp, proj["damage"], True, None)
                     hit = True
                     break
                 if hit:
@@ -2582,15 +2748,18 @@ def interact(button):
                 damage = int(player_level * (1.5 if has_pirate_bane_amulet else 1))
                 if player_hat and player_hat.get("rare_type") == "turret_breaker":
                     damage = int(damage * 1.5)
-                projectiles.append({
+                proj = {
                     "x": px,
                     "y": py,
                     "start_x": px,
                     "start_y": py,
                     "dir": (dx/length, dy/length),
                     "player": True,
-                    "damage": damage
-                })
+                    "damage": damage,
+                }
+                if player_hat and player_hat.get("rare_type") == "mage":
+                    proj["player_fireball"] = True
+                projectiles.append(proj)
                 player_attack_timer = now
         return
     x, y = selected_tile
@@ -3287,6 +3456,17 @@ running = True
 while running:
     dt = clock.get_time()  # Compute delta time once per frame
     world_play_time += dt
+    current_is_night = is_night(game_time)
+    if current_is_night:
+        if not prev_is_night:
+            night_survival_time = 0
+            night_rare_chance = 0
+        night_survival_time += dt / 1000.0
+        night_rare_chance = min(1.0, (night_survival_time // 15) * 0.05)
+    else:
+        night_survival_time = 0
+        night_rare_chance = 0
+    prev_is_night = current_is_night
     if player_invul_timer > 0:
         player_invul_timer = max(0, player_invul_timer - dt)
 
@@ -3384,6 +3564,8 @@ while running:
         spawn_pirate()
         spawn_dark_land_pirate()
         spawn_kraken()
+        if night_survival_time >= 30:
+            spawn_pirate_mage()
         pirate_spawn_timer = 0
 
     for event in pygame.event.get():

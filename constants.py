@@ -54,13 +54,21 @@ LIGHT_GRAY = (200, 200, 200)  # Color for used land tiles
 # --- Rare Pirate Types and Colors ---
 # Rare pirate types and their associated overlay colors for visual distinction.
 # Each type has a unique behavior (e.g., bridge_builder places boat tiles).
-RARE_PIRATE_TYPES = ["bridge_builder", "turret_breaker", "tanky", "speedy", "explosive"]  # List of rare pirate behaviors
+RARE_PIRATE_TYPES = [
+    "bridge_builder",
+    "turret_breaker",
+    "tanky",
+    "speedy",
+    "explosive",
+    "mage",
+]  # List of rare pirate behaviors
 RARE_TYPE_COLORS = {
     "bridge_builder": pygame.Color(0, 255, 0),  # Green: Pirates that place boat tiles
     "turret_breaker": pygame.Color(255, 255, 0),  # Yellow: Pirates that destroy turrets
     "tanky": pygame.Color(128, 0, 128),  # Purple: Pirates with double health
     "speedy": pygame.Color(0, 0, 255),  # Blue: Pirates with faster movement
-    "explosive": pygame.Color(255, 0, 0)  # Red: Pirates that explode on proximity
+    "explosive": pygame.Color(255, 0, 0),  # Red: Pirates that explode on proximity
+    "mage": pygame.Color(255, 165, 0),  # Orange: Pirates that cast fireballs
 }
 
 # --- Tile Types ---
@@ -214,6 +222,7 @@ MUSIC_VOLUME = 0.5  # Music volume level (0.0 to 1.0)
 CHUNK_SIZE = 16  # Size of each chunk in tiles (16x16)
 VIEW_CHUNKS = 5  # Number of chunks loaded around the player (5x5 grid)
 TURRET_RANGE = 4  # Range of turret attacks in tiles
+PIRATE_MAGE_RANGE = 12  # Range that pirate mages can cast fireballs
 TURRET_MAX_LEVEL = 99  # Maximum level for turret upgrades
 PLAYER_MAX_LEVEL = 99  # Maximum level for player progression
 PROJECTILE_SPEED = 0.2  # Base speed of turret projectiles in tiles per frame
